@@ -191,6 +191,10 @@
         <input type="number" id="pz" placeholder="z (north)" step="1">
       </div>
 
+      <div id="sortRow" hidden>
+        <label class="fld">Rank by</label>
+        <div class="filt" id="fsort"></div>
+      </div>
       <div id="tierNote"></div>
       <div id="out"></div>
     </div>
@@ -381,6 +385,16 @@ function rowPoints(row, pl){
   return n;
 }
 
+/* How to rank. The system does not model risk -- Tisy is dense and lethal, and
+   only you can price that. It ranks on raw travel time and shows the trade-off,
+   then you decide. (issue #4) */
+let SORT = "value";
+const SORTS = {
+  value:  {label:"Best value", fn:(a,b) => b.score - a.score},
+  near:   {label:"Closest",    fn:(a,b) => a.d - b.d},
+  most:   {label:"Most loot",  fn:(a,b) => b.pts - a.pts},
+};
+
 /* Grid-cluster matching buildings, then rank. Distance is a divisor rather than a
    hard cut: a big cache 2km away often beats a single shed next door. */
 function search(pl){
@@ -409,7 +423,7 @@ function search(pl){
       score: pos ? c.pts / (1 + d/1000) : c.pts,
     });
   }
-  return out.sort((a,b) => b.score - a.score).slice(0, 25);
+  return out.sort(SORTS[pos ? SORT : "most"].fn).slice(0, 25);
 }
 
 /* ---------- map ---------- */
@@ -512,6 +526,7 @@ function bearing(from, to){
 function render(){
   renderChips();
   const out = $("#out"), note = $("#tierNote");
+  $("#sortRow").hidden = !picked.length || !pos;
 
   if (!picked.length){
     out.innerHTML = `<p class="muted" style="margin-top:14px">
@@ -543,11 +558,16 @@ function render(){
          container, not a building.`) + `</p>`;
     return;
   }
-  out.innerHTML = `<label class="fld">${res.length} hotspots${pos?", nearest-best first":""}</label>
+  const nomLine = pl.map(p =>
+    `${p.e.label}: <b>${p.it.nom}</b> on the map at once (min ${p.it.min})`).join(" · ");
+
+  out.innerHTML = `<label class="fld">${res.length} hotspots
+      ${pos ? "· "+SORTS[SORT].label.toLowerCase() : "· set your position to rank by distance"}</label>
+    <p class="muted" style="margin:-4px 0 6px">${nomLine}</p>
     <ul class="res">` + res.map((r,i) => `
       <li data-i="${i}">
         <div class="r1"><span class="nm">${Math.round(r.x)}, ${Math.round(r.z)}</span>
-          <span class="dist">${pos ? (r.d/1000).toFixed(1)+" km "+bearing(pos,r) : r.pts+" pts"}</span></div>
+          <span class="dist">${pos ? (r.d/1000).toFixed(1)+" km "+bearing(pos,r) : ""}</span></div>
         <div class="r2">${r.pts} loot points · ${r.n} buildings · ${r.top}</div>
       </li>`).join("") + `</ul>`;
 
@@ -605,7 +625,8 @@ function renderCatalog(){
         <span><span class="nm">${e.label}</span>${e.variants.length
             ? ` <small style="color:var(--dim)">${e.variants.length} colours</small>` : ""}
           <br><span class="cls">${e.names[0]}${e.variants.length?"_*":""}</span></span>
-        <span class="meta">${e.it.nom ? (e.it.cat||"—")
+        <span class="meta">${e.it.nom
+            ? `${e.it.cat||"—"} · <b>${e.it.nom}</b> on map`
             : `<span style="color:var(--danger)">does not spawn</span>`}<br>
           <span class="t">${e.it.tier.length?e.it.tier.join("/").replace(/Tier/g,"T"):"any tier"}</span>
           · ${e.it.usg.join(", ")||"anywhere"}</span>
@@ -714,6 +735,15 @@ boot().then(() => {
     {names:()=>ENTRIES, text:e=>e.label + (e.variants.length?` (${e.variants.length})`:""),
      label:e=>e.it.cat||""},
     e => { if (!picked.includes(e.key)) picked.push(e.key); render(); });
+
+  $("#fsort").innerHTML = Object.entries(SORTS).map(([k,v]) =>
+    `<button data-s="${k}" aria-pressed="${k===SORT}">${v.label}</button>`).join("");
+  $("#fsort").querySelectorAll("button").forEach(b => b.onclick = () => {
+    SORT = b.dataset.s;
+    $("#fsort").querySelectorAll("button").forEach(x =>
+      x.setAttribute("aria-pressed", String(x.dataset.s === SORT)));
+    render();
+  });
 
   chipRow("#fcat", LIMITS.category, "cat");
   chipRow("#ftier", [...LIMITS.value, "any"], "tier");

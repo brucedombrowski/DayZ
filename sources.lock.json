@@ -1,5 +1,5 @@
 {
-  "dayz_build": "unverified - see README open question 4",
+  "dayz_build": "PS5 Official 1.29.163709 (PC upstream tracked at HEAD - see issue #1)",
   "sources": {
     "central-economy": {
       "branch": "master",
