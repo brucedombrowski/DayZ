@@ -418,7 +418,7 @@ const tok = n => getComputedStyle(document.documentElement)
    -- the CLE has no place names and sign text lives in unpublished terrain data. */
 
 let ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS,
-    PLAYER, PROFILES, PLACES, ANIMALS, MADE_BY;
+    PLAYER, PROFILES, PLACES, ANIMALS, CARGO, MADE_BY;
 /* Catalog entries. Colour variants of one item (WaterproofBag_Green/Orange/…)
    share the same physical loot points, so they collapse into a single entry and
    are counted ONCE — summing them would multiply the same points by 3. Families
@@ -434,9 +434,10 @@ const picked = [];
 async function boot(){
   const j = async n => (await fetch(`data/${n}.json`)).json();
   [ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS, PLAYER,
-   PROFILES, PLACES, ANIMALS] =
+   PROFILES, PLACES, ANIMALS, CARGO] =
     await Promise.all(["items","groups","instances","recipes","meta","limits","landmarks",
-      "toxic","events","spawns","player","profiles","places","animals"].map(j));
+      "toxic","events","spawns","player","profiles","places","animals","cargo"]
+      .map(j));
   LIMITS.value.forEach((n,i) => TIERBIT[n] = 1 << i);
   buildEntries();
 
@@ -447,7 +448,14 @@ async function boot(){
   $("#sub").textContent =
     `${META.counts.items.toLocaleString()} items · ` +
     `${META.counts.instances.toLocaleString()} buildings · ` +
-    `${META.counts.recipes} recipes · tier-gated · CLE @ ${META.commits["central-economy"].slice(0,7)}`;
+    `${META.counts.recipes} recipes · tier-gated · CLE @ `;
+  const sha = META.commits["central-economy"];
+  const a = document.createElement("a");
+  a.href = `https://github.com/BohemiaInteractive/DayZ-Central-Economy/commit/${sha}`;
+  a.target = "_blank"; a.rel = "noopener noreferrer";
+  a.className = "mono"; a.textContent = sha.slice(0, 7);
+  a.title = "The exact Central Economy commit this build was generated from";
+  $("#sub").appendChild(a);
 
   initMap();
   $("#load").remove();
@@ -796,6 +804,7 @@ let FILL_ITEMS = new Set();
 /* Union of every enabled profile. Recomputed on toggle rather than per building,
    because the planner asks "is this item wanted" tens of thousands of times. */
 function refreshFill(){
+  _cargoMemo = new Map();          // want-set changed; cached cargo values are stale
   FILL_ITEMS = new Set();
   for (const p of PROFILES.profiles)
     if (fillOn.has(p.id)) p.items.forEach(n => FILL_ITEMS.add(n));
@@ -900,6 +909,30 @@ function slotPool(type, ci, tierFlags){
   return total;
 }
 
+/* What one spawned item is worth against a want-set: itself, plus whatever it
+   arrives carrying.
+
+   Loot is not flat -- 298 spawning items are containers or weapons that come with
+   contents. A DryBag has a 5.3% chance of Rope inside; an M4 brings ~3 attachments.
+   Counting a spawned backpack as one item understates the run. Memoised per
+   want-set because this is asked ~11k times per plan. */
+let _cargoMemo = new Map();
+function itemValue(name, isWanted, wantKey, matchName){
+  let v = isWanted ? 1 : 0;
+  const bag = CARGO[name];
+  if (bag){
+    const k = wantKey + "|" + name;
+    let extra = _cargoMemo.get(k);
+    if (extra === undefined){
+      extra = 0;
+      for (const [inner, p] of Object.entries(bag)) if (matchName(inner)) extra += p;
+      _cargoMemo.set(k, extra);
+    }
+    v += extra;
+  }
+  return v;
+}
+
 /* Expected count of a set of items in one building.
 
    eff (not raw points) is how many slots actually hold loot; share is the item's
@@ -918,7 +951,9 @@ function expectedFor(row, match){
       if (it.usg.length && !it.usg.some(u => g.usg.includes(u))) continue;
       const m = it.tier.reduce((a,t) => a | (TIERBIT[t]||0), 0);
       if (m && !(tierFlags & m)) continue;
-      if (match(name, it)) want += it.nom;
+      const v = itemValue(name, match(name, it), match._key || "?",
+                          n => { const x = ITEMS[n]; return x ? match(n, x) : false; });
+      if (v) want += it.nom * v;
     }
     if (!want) return;
     const pool = slotPool(type, ci, tierFlags);
@@ -975,10 +1010,12 @@ function candidates(pl, start){
     const need = {};
     let any = 0;
     pl.forEach((p, i) => {
-      const v = expectedFor(row, n => needSets[i].has(n));
+      const m = n => needSets[i].has(n); m._key = "need" + i;
+      const v = expectedFor(row, m);
       if (v > 0){ need[p.e.key] = v; any += v; }
     });
-    const fill = wantFill ? expectedFor(row, n => FILL_ITEMS.has(n)) : 0;
+    const fillM = n => FILL_ITEMS.has(n); fillM._key = "fill" + FILL_ITEMS.size;
+    const fill = wantFill ? expectedFor(row, fillM) : 0;
     if (any <= 0 && fill <= 0.02) continue;
 
     const k = ((row[1]/CELL)|0) + "," + ((row[2]/CELL)|0);

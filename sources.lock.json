@@ -25,6 +25,14 @@
           "bytes": 13446,
           "sha256": "e50a258545cafb49e307e1ae29b2845a738f94fd346c0e072aff011130f3bb90"
         },
+        "dayzOffline.chernarusplus/cfgrandompresets.xml": {
+          "bytes": 34111,
+          "sha256": "e8f5f03d47ea439e3da9b8afe849818e43ba90c5c7d2fdce83a291872a2526d9"
+        },
+        "dayzOffline.chernarusplus/cfgspawnabletypes.xml": {
+          "bytes": 127746,
+          "sha256": "16b8c15bc242058ac67dd879c5c3bce9253d2364f352cab0bfe72e18ff75bf0e"
+        },
         "dayzOffline.chernarusplus/db/events.xml": {
           "bytes": 52735,
           "sha256": "013afe9ac12b4904180eb30ec23dd1c00b6640640d4365736271a7128a34dd7f"

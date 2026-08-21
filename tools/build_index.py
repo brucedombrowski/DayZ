@@ -587,6 +587,61 @@ def parse_player_constants(text: str) -> dict:
     return out
 
 
+def parse_cargo(presets_xml: bytes, spawn_xml: bytes) -> dict:
+    """cfgrandompresets.xml + cfgspawnabletypes.xml -> what spawns INSIDE things.
+
+    Loot is not flat. 235 items that spawn in buildings are containers or weapons
+    that arrive with contents: a DryBag carries food/tools, an M4 carries a
+    handguard, optic and sometimes a magazine. Counting a spawned backpack as one
+    item understates what you actually carry home.
+
+    SEMANTICS, and this is an assumption worth stating. Within one <cargo> or
+    <attachments> group, item chances are CUMULATIVE and one item is selected --
+    not independent rolls. The tell is the M4A1 magazine group: 0.15, 0.50, 0.70,
+    1.00. A trailing 1.00 is a guaranteed fallback for a walk-the-list draw; under
+    independent rolls it would mean "always spawns every magazine size at once".
+
+    So expected items from a group = the group's own `chance`, and each item's
+    share of that is its slice of the cumulative range.
+    """
+    presets = {}
+    for c in ET.fromstring(presets_xml):
+        items = [(i.get("name"), float(i.get("chance", 0))) for i in c.findall("item")]
+        presets[(c.tag, c.get("name"))] = (float(c.get("chance", 0)), items)
+
+    def share(items):
+        """Cumulative list -> per-item probability, given the group fired."""
+        out, prev = [], 0.0
+        for name, ch in items:
+            out.append((name, max(0.0, ch - prev)))
+            prev = max(prev, ch)
+        if prev < 1.0 and out:            # unnormalised list: scale to sum 1
+            tot = sum(p for _n, p in out) or 1.0
+            out = [(n, p / tot) for n, p in out]
+        return out
+
+    out = {}
+    for t in ET.fromstring(spawn_xml).findall("type"):
+        name = t.get("name")
+        contents: dict[str, float] = {}
+        for tag in ("cargo", "attachments"):
+            for grp in t.findall(tag):
+                pre = grp.get("preset")
+                if pre is not None:
+                    gch, items = presets.get((tag, pre), (0.0, []))
+                else:
+                    gch = float(grp.get("chance", 0))
+                    items = [(i.get("name"), float(i.get("chance", 0)))
+                             for i in grp.findall("item")]
+                if not items:
+                    continue
+                for nm, pr in share(items):
+                    contents[nm] = contents.get(nm, 0.0) + gch * pr
+        if contents:
+            out[name] = {k: round(v, 4) for k, v in sorted(contents.items()) if v >= 0.001}
+    return out
+
+
 def resolve_profiles(cfg: dict, items: dict) -> dict:
     """config/loot-profiles.json -> concrete item sets, validated against reality.
 
@@ -826,6 +881,8 @@ def cmd_build() -> int:
     items = parse_types((ce / "db" / "types.xml").read_bytes())
     groups = parse_proto((ce / "mapgroupproto.xml").read_bytes())
     limits = parse_limits((ce / "cfglimitsdefinition.xml").read_bytes())
+    cargo = parse_cargo((ce / "cfgrandompresets.xml").read_bytes(),
+                        (ce / "cfgspawnabletypes.xml").read_bytes())
     profiles = resolve_profiles(
         json.loads((ROOT / "config" / "loot-profiles.json").read_text()), items)
     area = parse_areaflags((ce / "areaflags.map").read_bytes())
@@ -851,6 +908,7 @@ def cmd_build() -> int:
     write_json(OUT / "instances.json", {"types": names, "rows": rows})
     write_json(OUT / "limits.json", limits)
     write_json(OUT / "profiles.json", profiles)
+    write_json(OUT / "cargo.json", cargo)
     tier_px = render_tier_png(OUT / "tiers.png", area)
     print(f"  docs/data/tiers.png  {(OUT/'tiers.png').stat().st_size:,}b  ({tier_px}x{tier_px})")
     uq = render_unique_png(OUT / "unique.png", area)

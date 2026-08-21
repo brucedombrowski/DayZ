@@ -177,6 +177,22 @@ check("hunting profile is Hunting-usage",
 dead = [n for p in profiles["profiles"] for n in p["items"] if not items[n]["nom"]]
 check("no non-spawning items in profiles", dead[:3], [])
 
+# --- cargo: loot is not flat ---------------------------------------------------
+# 298 spawning items arrive carrying something. Counting a spawned backpack as one
+# item understates a run -- most for weapons, which bring ammo and attachments.
+cargo = load("cargo")
+spawning_with_cargo = [n for n in cargo if n in items and items[n]["nom"] > 0]
+check("items with cargo that spawn", len(spawning_with_cargo), 298)
+check("M4A1 carries attachments", "M4A1" in cargo, True)
+check("DryBag carries rope sometimes", "Rope" in cargo.get("DryBag_Black", {}), True)
+# Cumulative-selection semantics: a group's expected items cannot exceed 1 per
+# group. M4A1 has 4 groups, so its total must stay at or under 4.
+check("M4A1 cargo within group bound",
+      round(sum(cargo["M4A1"].values()), 2) <= 4.0, True)
+# No item should claim to contain itself.
+selfref = [n for n, bag in cargo.items() if n in bag]
+check("no self-containing items", selfref[:3], [])
+
 # --- saturating objective ----------------------------------------------------
 # P(at least one) must flatten, or the planner would keep spending time on a
 # target it has already almost certainly found.

@@ -160,6 +160,7 @@ which config authored its rules, and what each rule matched.
 | `cfgeventspawns.xml` + `db/events.xml` | `events.json` | Heli crashes, convoys, dynamic toxic, vehicles: candidate sites + how many are live |
 | `cfgplayerspawnpoints.xml` | `spawns.json` | Fresh / hop / travel spawn points |
 | `env/*_territories.xml` (12) | `animals.json` | Wolf, bear, infected, deer, boar and other territory zones |
+| `cfgrandompresets.xml` + `cfgspawnabletypes.xml` | `cargo.json` | What spawns **inside** things — 298 spawning items carry contents |
 
 ### From `BohemiaInteractive/DayZ-Script-Diff`
 
@@ -175,12 +176,33 @@ which config authored its rules, and what each rule matched.
 | `design-tokens/colors.css` | `docs/tokens/colors.css` | Colour tokens, dark + light, WCAG AA |
 | `design-tokens/typography.css` | `docs/tokens/typography.css` | Type scale, weights, font stacks |
 
+### Loot is not flat
+
+298 items that spawn in buildings arrive **carrying something**: a `DryBag` has a 5.3%
+chance of `Rope` inside, an `M4A1` brings roughly three attachments. Counting a spawned
+container as one item understates the run, and unevenly:
+
+| Profile | Yield understated by |
+|---|---:|
+| Gun & gear repair | **14.7%** |
+| Food & water | 5.7% |
+| Medical | 3.7% |
+| Base building | 2.7% |
+| Hunting, rags | <1% |
+
+**Semantics, stated because it is an assumption.** Within one `<cargo>` or
+`<attachments>` group the item chances are **cumulative and one item is drawn**, not
+rolled independently. The tell is the `M4A1` magazine group — `0.15, 0.50, 0.70, 1.00`.
+A trailing `1.00` is a guaranteed fallback for a walk-the-list draw; under independent
+rolls it would mean "always spawns every magazine size at once". So a group contributes
+its own `chance` in expected items, split across its entries by cumulative share.
+
 ### Deliberately not used
 
-`cfgspawnabletypes.xml` and `cfgrandompresets.xml` (cargo and attachments inside items),
 `mapgroupcluster*.xml` (23 MB of fruit trees, berry bushes and stone piles — a real
-foraging layer, see issue), `cfgweather.xml`, `db/globals.xml`, `cfgeventgroups.xml`.
-Listed here so "unused" stays a decision rather than an oversight.
+foraging layer), `cfgweather.xml`, `db/globals.xml`, `cfgeventgroups.xml`,
+`cfgIgnoreList.xml`, `mapclusterproto.xml`. Listed here so "unused" stays a decision
+rather than an oversight.
 
 ## Gaps in the source data, and what we do instead
 
