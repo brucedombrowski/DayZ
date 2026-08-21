@@ -88,11 +88,17 @@ Clustering those points at 300 m and filtering to the SW quadrant gives:
 | 2 | 352 | 48 | 6416, 2550 | Chernogorsk industrial |
 | 3 | 224 | 24 | 7082, 2826 | E of Chernogorsk |
 
-**But note the catch, and it is the whole reason step 4 matters:** the sledgehammer is
-`Tier3`/`Tier4`, and southwest coastal Chernarus is largely Tier 1–2. Those top-ranked
-clusters may be *structurally* valid and still spawn almost nothing. **A tool that skips
-tier gating will confidently send you to the wrong town.** See
-[Open question 1](#1-tier-gating-areaflagsmap).
+**And here is why step 4 matters.** The sledgehammer is `Tier3`/`Tier4`; southwest coastal
+Chernarus is largely Tier 1–2. With tier gating now applied:
+
+| Cluster | Ungated | Tier-gated |
+|---|---:|---:|
+| Zelenogorsk industrial | 356 | **356** |
+| Chernogorsk industrial | 352 | **13** |
+
+Structurally the two look like a coin flip. In reality Chernogorsk spawns almost no
+sledgehammers. **Go to Zelenogorsk.** A tool without tier gating would have sent you to the
+wrong town half the time.
 
 ---
 
@@ -104,7 +110,7 @@ tier gating will confidently send you to the wrong town.** See
   item  ──►  usage/category/tag/tier
                   │
                   └──► building types  ──►  world instances  ──►  tier filter  ──►  ranked map
-                       (134)                 (4,821)               (Tier 3–4)
+                       (134)                 (4,821)               (1,686)
 ```
 
 Then rotate each prototype `point` by the instance's yaw (`a` / `rpy`) and add it to the
@@ -126,7 +132,8 @@ the official config flows through without a code change.
 | ├ `db/types.xml` (880 KB) | Per-item nominal/min/lifetime, `category`, `tag`, `usage`, `value` (tier). |
 | ├ `mapgroupproto.xml` (1.2 MB) | Building prototypes: containers, their category/tag filters, and every loot `point` with local offset, range, height. |
 | ├ `mapgrouppos.xml` (1.5 MB) | World placement of all 11,679 building instances: `pos`, `rpy`, `a`. |
-| ├ `areaflags.map` (83 MB) | Per-cell tier / usage zones. 4096×4096 grid. See open question 1. |
+| ├ `areaflags.map` (83 MB) | Per-cell tier / usage zones, 4096×4096. **Decoded** — format in open question 1. |
+| ├ `cfglimitsdefinition.xml` | The category/tag/usage/value lists. Declaration order = bit order in `areaflags.map`. |
 | ├ `cfgspawnabletypes.xml` | Cargo & attachment spawns — items that appear *inside* other items. |
 | ├ `cfgrandompresets.xml` | Named loot presets referenced by the above. |
 | └ `cfgeventspawns.xml`, `db/events.xml` | Dynamic events (heli crashes, police cars, convoys) — a second, non-building spawn channel. |
@@ -306,28 +313,37 @@ One recurring source of bugs, so it is written down once here:
 
 These need answering before or during v1. They are the real risk in this project.
 
-### 1. Tier gating (`areaflags.map`)
+### 1. ~~Tier gating (`areaflags.map`)~~ — SOLVED
 
-**This is the highest-value unknown.** Without it, results are actively misleading — see
-the sledgehammer example above.
-
-Progress so far — the 128-byte header reads as:
+Decoded and shipped. Format, for anyone who needs it:
 
 ```
-00000000: 0010 0000  0010 0000  003c 0000  003c 0000   →  4096, 4096, 60, 60
-00000010: 2000 0000  0000 0000                         →  32, 0
+offset 0    u32 gridW=4096, gridH=4096, worldW=15360, worldH=15360, bitsPerCell=32, reserved=0
+offset 24   gridW*gridH  u32   usage bitmask
+then        gridW*gridH  u8    value bitmask (tier)
 ```
 
-So: a **4096 × 4096** grid over 15360 m = **3.75 m per cell**. File is 83,886,104 bytes;
-`83886104 − 24 = 83886080 = 4096 × 4096 × 5` exactly, so the body is **5 bytes per cell**
-after a 24-byte header. What those 5 bytes encode (tier bits? usage bitmask? layered
-planes?) is not yet confirmed.
+Two blocks, not "5 bytes per cell" as first guessed: a 4096² `uint32` plane followed by a
+4096² `uint8` plane. `24 + 4096²·4 + 4096²·1 = 83,886,104` — the exact file size. Cell
+`(row, col) = (z / 3.75, x / 3.75)`; row increases with +z, no flip.
 
-Options, in order of preference:
-1. Finish decoding the 5-byte cell and read tiers directly. Highest fidelity.
-2. Derive tier zones empirically by cross-referencing known tier-exclusive items against
-   where their host buildings actually are.
-3. Approximate with community-drawn tier polygons. Fastest, least trustworthy.
+**Bit order is the declaration order in `cfglimitsdefinition.xml`** — `usageflags` for the
+u32 plane (Military=bit0 … Historical=bit16), `valueflags` for the u8 plane (Tier1..4 =
+bits 0–3, `Unique` = bit 4). That last one explains the odd `0x11`/`0x12`/`0x14` cells:
+tier + Unique.
+
+Confirmed two independent ways: the declaration-order hypothesis, and an empirical check
+reading the usage bitmask at the position of every building whose prototype declares exactly
+one usage. Military→bit0, Police→bit1, Medic→bit2, Firefighter→bit3, Industrial→bit4,
+Farm→bit5, Coast→bit6, Hunting→bit9 all matched.
+
+Tier is resolved **at build time, per building**, so the browser gets five integers per row
+instead of a 16 MB grid.
+
+**What it changed:** for `SledgeHammer`, gating removes 66% of candidate loot points
+(32,624 → 11,182). Chernogorsk drops from 352 points to 13; Zelenogorsk keeps all 356.
+Ungated they looked like a 352-vs-356 coin flip — and the coin would have sent you to the
+wrong town.
 
 ### 2. Map base layer
 
@@ -376,6 +392,7 @@ establish the current console build number and pin to the matching tag, not to `
 ```bash
 python3 tools/build_index.py sync     # fetch pinned upstream files, verify sha256
 python3 tools/build_index.py build    # parse cache/ -> docs/data/*.json
+python3 tools/test_golden.py          # lock the numbers this README cites
 python3 -m http.server -d docs 8000   # http://localhost:8000
 ```
 
@@ -389,8 +406,7 @@ changing the lockfile must produce byte-identical output; that is the determinis
 **v1 live.** The loot map and crafting tree both work against real data. The numbers in this
 README come from queries against the real files, and the browser reproduces them exactly.
 
-**Not yet trustworthy for tier-gated items** — see
-[issue #6](https://github.com/brucedombrowski/DayZ/issues/6). The UI says so where it matters.
+**Tier gating is live**, so results reflect where items can actually spawn.
 
 Open questions are tracked as
 [issues](https://github.com/brucedombrowski/DayZ/issues); those labelled

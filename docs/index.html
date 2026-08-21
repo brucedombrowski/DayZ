@@ -115,6 +115,28 @@
   }
   .tree button.find:hover{background:var(--accent2);color:#0f1108}
 
+  /* ---- catalog ---- */
+  .filt{display:flex;flex-wrap:wrap;gap:4px}
+  .filt button{
+    padding:3px 8px;background:var(--panel2);color:var(--dim);border:1px solid var(--line);
+    border-radius:20px;font:inherit;font-size:11.5px;cursor:pointer;
+  }
+  .filt button:hover{color:var(--text);border-color:var(--accent2)}
+  .filt button[aria-pressed=true]{background:var(--accent2);color:#0f1108;
+    border-color:var(--accent2);font-weight:600}
+  .cat{list-style:none;margin:10px 0 0;padding:0}
+  .cat li{
+    display:flex;justify-content:space-between;align-items:center;gap:8px;
+    padding:6px 9px;margin-bottom:4px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:5px;cursor:pointer;
+  }
+  .cat li:hover{border-color:var(--accent2);background:#282d1c}
+  .cat li[data-in=1]{border-left:3px solid var(--accent)}
+  .cat .nm{font-weight:600}
+  .cat .cls{font-size:11px;color:var(--dim);font-family:ui-monospace,Menlo,monospace}
+  .cat .meta{font-size:11px;color:var(--dim);text-align:right;white-space:nowrap}
+  .cat .t{color:var(--accent)}
+
   /* ---- map ---- */
   #map{flex:1;height:100%;background:#0c0e0a}
   .leaflet-container{background:#0c0e0a;font-family:inherit}
@@ -150,6 +172,7 @@
     </header>
     <div class="tabs" role="tablist">
       <button role="tab" id="tab-loot" aria-selected="true" aria-controls="pane-loot">Loot map</button>
+      <button role="tab" id="tab-cat" aria-selected="false" aria-controls="pane-cat">Catalog</button>
       <button role="tab" id="tab-craft" aria-selected="false" aria-controls="pane-craft">Crafting</button>
     </div>
 
@@ -170,6 +193,16 @@
 
       <div id="tierNote"></div>
       <div id="out"></div>
+    </div>
+
+    <div class="pane" id="pane-cat" role="tabpanel">
+      <label class="fld" for="fq">Filter by name</label>
+      <input type="text" id="fq" placeholder="e.g. hammer, axe, rice" autocomplete="off"
+             spellcheck="false">
+      <label class="fld">Category</label><div class="filt" id="fcat"></div>
+      <label class="fld">Tier</label><div class="filt" id="ftier"></div>
+      <label class="fld">Where it spawns</label><div class="filt" id="fusg"></div>
+      <div id="catout"></div>
     </div>
 
     <div class="pane" id="pane-craft" role="tabpanel">
@@ -209,15 +242,25 @@ const TOWNS = [
   ["Kabanino",4800,8200],["Pustoshka",3200,7000],
 ];
 
-let ITEMS, GROUPS, INST, RECIPES, META, MADE_BY;
+let ITEMS, GROUPS, INST, RECIPES, META, LIMITS, MADE_BY;
+/* Catalog entries. Colour variants of one item (WaterproofBag_Green/Orange/…)
+   share the same physical loot points, so they collapse into a single entry and
+   are counted ONCE — summing them would multiply the same points by 3. Families
+   whose members differ in category/tag/usage/tier (AK, Ammo) are NOT collapsed,
+   because those really are different items. */
+let ENTRIES = [], ENTRY = {}, NAME2ENTRY = {};
+/* Bit order in areaflags.map is the declaration order in cfglimitsdefinition.xml. */
+let TIERBIT = {};
 let map, pinMarker = null, hotLayer = null, pos = null;
 const picked = [];
 
 /* ---------- data ---------- */
 async function boot(){
   const j = async n => (await fetch(`data/${n}.json`)).json();
-  [ITEMS, GROUPS, INST, RECIPES, META] =
-    await Promise.all(["items","groups","instances","recipes","meta"].map(j));
+  [ITEMS, GROUPS, INST, RECIPES, META, LIMITS] =
+    await Promise.all(["items","groups","instances","recipes","meta","limits"].map(j));
+  LIMITS.value.forEach((n,i) => TIERBIT[n] = 1 << i);
+  buildEntries();
 
   MADE_BY = new Map();
   for (const r of RECIPES)
@@ -226,10 +269,66 @@ async function boot(){
   $("#sub").textContent =
     `${META.counts.items.toLocaleString()} items · ` +
     `${META.counts.instances.toLocaleString()} buildings · ` +
-    `${META.counts.recipes} recipes · CLE @ ${META.commits["central-economy"].slice(0,7)}`;
+    `${META.counts.recipes} recipes · tier-gated · CLE @ ${META.commits["central-economy"].slice(0,7)}`;
 
   initMap();
   $("#load").remove();
+}
+
+/* ---------- catalog entries ---------- */
+const norm = s => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+const human = s => s.replace(/_/g, " ")
+  .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+  .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+  .replace(/\s+/g, " ").trim();
+
+function buildEntries(){
+  const profile = i => JSON.stringify([i.cat, i.tag, i.usg, i.tier]);
+  const fams = {};
+  for (const n of Object.keys(ITEMS)){
+    const m = n.match(/^(.*?)_([A-Za-z0-9]+)$/);
+    if (m) (fams[m[1]] ||= []).push(n);
+  }
+  const collapsed = new Set();
+  for (const [f, names] of Object.entries(fams)){
+    if (names.length < 2) continue;
+    if (new Set(names.map(n => profile(ITEMS[n]))).size !== 1) continue;  // mixed
+    names.forEach(n => collapsed.add(n));
+    ENTRIES.push({key:f, label:human(f), names, it:ITEMS[names[0]],
+                  variants:names.map(n => n.slice(f.length+1))});
+  }
+  for (const n of Object.keys(ITEMS))
+    if (!collapsed.has(n))
+      ENTRIES.push({key:n, label:human(n), names:[n], it:ITEMS[n], variants:[]});
+
+  for (const e of ENTRIES){
+    e.norm = norm(e.key + e.label);
+    ENTRY[e.key] = e;
+    e.names.forEach(n => NAME2ENTRY[n] = e.key);
+  }
+  ENTRIES.sort((a,b) => a.label.localeCompare(b.label));
+}
+
+/* Token search: every whitespace-separated token must appear, so "waterproof bag"
+   finds WaterproofBag and "dry bag" finds DryBag. Also matches the query with
+   spaces removed, since class names are written without them. */
+function matches(e, q){
+  if (!q) return true;
+  const toks = q.toLowerCase().split(/\s+/).filter(Boolean).map(norm).filter(Boolean);
+  if (!toks.length) return true;
+  return toks.every(t => e.norm.includes(t)) || e.norm.includes(norm(q));
+}
+
+function rank(list, q){
+  const nq = norm(q);
+  return list.map(e => {
+    let s = 3;
+    if (e.norm.startsWith(nq)) s = 0;
+    else if (e.label.toLowerCase().startsWith(q.toLowerCase())) s = 1;
+    else if (e.norm.includes(nq)) s = 2;
+    return {e, s};
+  }).sort((a,b) => a.s - b.s || a.e.label.length - b.e.label.length)
+    .map(x => x.e);
 }
 
 /* ---------- the core query ----------
@@ -258,26 +357,38 @@ function pointsFor(building, it){
   return n;
 }
 
-/* Per-building-type point counts for the current selection, summed over items. */
-function weights(){
-  const w = new Float64Array(INST.types.length);
-  for (const name of picked){
-    const it = ITEMS[name];
-    for (let i = 0; i < INST.types.length; i++) w[i] += pointsFor(INST.types[i], it);
-  }
-  return w;
+/* Per-item point counts by building type, plus that item's tier mask.
+
+   Tier is a property of the *place*, not the building type: two identical sheds
+   can sit in Tier 1 and Tier 4. So points are counted per type but gated per
+   instance, in rowPoints() below. */
+function plans(){
+  return picked.map(key => {
+    const e = ENTRY[key], it = e.it;
+    const by = new Float64Array(INST.types.length);
+    for (let i = 0; i < INST.types.length; i++) by[i] = pointsFor(INST.types[i], it);
+    return {e, it, by, mask: it.tier.reduce((a,t) => a | (TIERBIT[t]||0), 0)};
+  });
+}
+
+/* Loot points a single building instance offers, tier gate applied.
+   row = [typeIdx, x, z, tierFlags, usageFlags] */
+function rowPoints(row, pl){
+  let n = 0;
+  for (const p of pl)
+    if (!p.mask || (row[3] & p.mask)) n += p.by[row[0]];
+  return n;
 }
 
 /* Grid-cluster matching buildings, then rank. Distance is a divisor rather than a
    hard cut: a big cache 2km away often beats a single shed next door. */
-function search(){
-  const w = weights();
-  if (!w.some(v => v > 0)) return [];
+function search(pl){
   const CELL = 300, cells = new Map();
 
-  for (const [ti, x, z] of INST.rows){
-    const pts = w[ti];
+  for (const row of INST.rows){
+    const pts = rowPoints(row, pl);
     if (!pts) continue;
+    const [ti, x, z] = row;
     const k = ((x / CELL) | 0) + "," + ((z / CELL) | 0);
     let c = cells.get(k);
     if (!c) cells.set(k, c = {pts:0, n:0, sx:0, sz:0, types:new Map()});
@@ -322,7 +433,7 @@ class Dots extends L.Layer {
     return this;
   }
   onRemove(m){ this._c.remove(); m.off("move zoom moveend zoomend resize viewreset", this._on); }
-  setData(hot){ this._hot = hot; this.redraw(); }
+  setData(pl){ this._pl = pl; this.redraw(); }
   redraw(){
     if (this._raf) return;
     this._raf = requestAnimationFrame(() => { this._raf = 0; this._draw(); });
@@ -350,7 +461,7 @@ class Dots extends L.Layer {
       g.fillStyle = pass ? "#b8c94a" : "#3a4230";
       g.beginPath();
       for (const row of INST.rows){
-        const hot = this._hot ? this._hot[row[0]] > 0 : false;
+        const hot = this._pl ? rowPoints(row, this._pl) > 0 : false;
         if ((pass === 1) !== hot) continue;
         const px = o.x + row[1]*sx, py = o.y + row[2]*sz_;
         if (px < -4 || py < -4 || px > sz.x+4 || py > sz.y+4) continue;
@@ -408,21 +519,27 @@ function render(){
     note.innerHTML = ""; dots.setData(null); return;
   }
 
-  const w = weights();
-  dots.setData(w);
+  const pl = plans();
+  dots.setData(pl);
 
-  const tiers = [...new Set(picked.flatMap(n => ITEMS[n].tier))].sort();
-  note.innerHTML = tiers.length ? `<div class="note">
-      <b>Tier not yet enforced.</b> ${picked.length>1?"These items":"This item"} only
-      spawns in <b>${tiers.join(", ")}</b> areas, but tier zones
-      (<code>areaflags.map</code>) aren't decoded yet — so a hotspot below can be
-      structurally valid and still spawn nothing. Verify before a long trip.
+  const tiers = [...new Set(picked.flatMap(k => ENTRY[k].it.tier))].sort();
+  const untiered = picked.filter(k => !ENTRY[k].it.tier.length).map(k => ENTRY[k].label);
+  note.innerHTML = tiers.length ? `<div class="note" style="background:#16220f;
+      border-color:#2f4a1e;color:#c3d99a">
+      <b style="color:var(--accent)">Tier gate active.</b> Showing only
+      <b>${tiers.join(", ")}</b> areas — where ${picked.length>1?"these items":"this item"}
+      can actually spawn.${untiered.length ? ` (${untiered.join(", ")} declares no tier;
+      shown everywhere.)` : ""}
     </div>` : "";
 
-  const res = search();
+  const res = search(pl);
   if (!res.length){
-    out.innerHTML = `<p class="muted" style="margin-top:12px">No building spawns.
-      This item likely comes from a dynamic event or a container, not a building.</p>`;
+    const anyStruct = INST.rows.some(r => pl.some(p => p.by[r[0]] > 0));
+    out.innerHTML = `<p class="muted" style="margin-top:12px">` + (anyStruct
+      ? `No spawns in <b>${tiers.join(", ")}</b> areas. The right building types exist,
+         but none sit in a tier where this item can spawn.`
+      : `No building spawns. This item likely comes from a dynamic event or a
+         container, not a building.`) + `</p>`;
     return;
   }
   out.innerHTML = `<label class="fld">${res.length} hotspots${pos?", nearest-best first":""}</label>
@@ -445,13 +562,58 @@ function render(){
 }
 
 function renderChips(){
-  $("#chips").innerHTML = picked.map(n => {
-    const it = ITEMS[n];
-    return `<span class="chip">${n}<small style="color:var(--dim)">${it.tier.join("/")||"—"}</small>
-      <button data-n="${n}" title="remove">×</button></span>`;
+  $("#chips").innerHTML = picked.map(k => {
+    const e = ENTRY[k];
+    return `<span class="chip">${e.label}${e.variants.length
+        ? `<small style="color:var(--dim)">${e.variants.length} colours</small>` : ""}
+      <small style="color:var(--dim)">${e.it.tier.join("/")||"any tier"}</small>
+      <button data-k="${k}" title="remove">×</button></span>`;
   }).join("");
   $("#chips").querySelectorAll("button").forEach(b => b.onclick = () => {
-    picked.splice(picked.indexOf(b.dataset.n),1); render();
+    picked.splice(picked.indexOf(b.dataset.k),1); render();
+  });
+}
+
+/* ---------- catalog ---------- */
+const filt = {cat:new Set(), tier:new Set(), usg:new Set()};
+
+function chipRow(sel, values, group){
+  $(sel).innerHTML = values.map(v =>
+    `<button data-v="${v}" aria-pressed="${filt[group].has(v)}">${v}</button>`).join("");
+  $(sel).querySelectorAll("button").forEach(b => b.onclick = () => {
+    const v = b.dataset.v;
+    filt[group].has(v) ? filt[group].delete(v) : filt[group].add(v);
+    chipRow(sel, values, group); renderCatalog();
+  });
+}
+
+function renderCatalog(){
+  const q = $("#fq").value.trim();
+  let list = ENTRIES.filter(e => matches(e, q));
+  if (filt.cat.size)  list = list.filter(e => filt.cat.has(e.it.cat));
+  if (filt.tier.size) list = list.filter(e => e.it.tier.some(t => filt.tier.has(t))
+                                          || (filt.tier.has("any") && !e.it.tier.length));
+  if (filt.usg.size)  list = list.filter(e => e.it.usg.some(u => filt.usg.has(u)));
+  if (q) list = rank(list, q);
+
+  const total = list.length, shown = list.slice(0, 250);
+  $("#catout").innerHTML = `<label class="fld">${total} item${total===1?"":"s"}${
+      total > 250 ? " (showing 250 — narrow the filter)" : ""}</label>
+    <ul class="cat">` + shown.map(e => `
+      <li data-k="${e.key}" data-in="${picked.includes(e.key)?1:0}">
+        <span><span class="nm">${e.label}</span>${e.variants.length
+            ? ` <small style="color:var(--dim)">${e.variants.length} colours</small>` : ""}
+          <br><span class="cls">${e.names[0]}${e.variants.length?"_*":""}</span></span>
+        <span class="meta">${e.it.nom ? (e.it.cat||"—")
+            : `<span style="color:var(--danger)">does not spawn</span>`}<br>
+          <span class="t">${e.it.tier.length?e.it.tier.join("/").replace(/Tier/g,"T"):"any tier"}</span>
+          · ${e.it.usg.join(", ")||"anywhere"}</span>
+      </li>`).join("") + `</ul>`;
+
+  $("#catout").querySelectorAll("li").forEach(li => li.onclick = () => {
+    const k = li.dataset.k;
+    picked.includes(k) ? picked.splice(picked.indexOf(k),1) : picked.push(k);
+    renderCatalog(); render();
   });
 }
 
@@ -462,23 +624,19 @@ function autocomplete(inputSel, listSel, pool, onPick){
 
   const close = () => { list.hidden = true; cur = -1; };
   const paint = () => {
-    list.innerHTML = hits.map((n,i) =>
-      `<li role="option" data-i="${i}" aria-selected="${i===cur}">${n}
-        <small>${pool.label(n)}</small></li>`).join("");
+    list.innerHTML = hits.map((e,i) =>
+      `<li role="option" data-i="${i}" aria-selected="${i===cur}">${pool.text(e)}
+        <small>${pool.label(e)}</small></li>`).join("");
     list.hidden = !hits.length;
     list.querySelectorAll("li").forEach(li =>
-      li.onmousedown = e => { e.preventDefault(); choose(+li.dataset.i); });
+      li.onmousedown = ev => { ev.preventDefault(); choose(+li.dataset.i); });
   };
   const choose = i => { if (hits[i]){ onPick(hits[i]); inp.value = ""; close(); } };
 
   inp.oninput = () => {
-    const q = inp.value.trim().toLowerCase();
+    const q = inp.value.trim();
     if (!q){ close(); return; }
-    const all = pool.names();
-    // prefix matches first — typing "sled" should surface SledgeHammer, not bury it
-    hits = all.filter(n => n.toLowerCase().startsWith(q))
-      .concat(all.filter(n => !n.toLowerCase().startsWith(q) && n.toLowerCase().includes(q)))
-      .slice(0,50);
+    hits = rank(pool.names().filter(e => matches(e, q)), q).slice(0, 50);
     cur = hits.length ? 0 : -1; paint();
   };
   inp.onkeydown = e => {
@@ -528,20 +686,21 @@ function showCraft(item){
     (de-craft) paths are noted but not expanded. Base-building recipes live outside
     <code>RecipeBase</code> and aren't covered yet.</p>`;
   $("#cout").querySelectorAll("button.find").forEach(b => b.onclick = () => {
-    const n = b.dataset.find;
-    if (!picked.includes(n)) picked.push(n);
+    const k = NAME2ENTRY[b.dataset.find] || b.dataset.find;
+    if (ENTRY[k] && !picked.includes(k)) picked.push(k);
     tab("loot"); render();
   });
 }
 
 /* ---------- tabs ---------- */
 function tab(which){
-  for (const t of ["loot","craft"]){
+  for (const t of ["loot","cat","craft"]){
     $("#tab-"+t).setAttribute("aria-selected", String(t === which));
     $("#pane-"+t).toggleAttribute("data-active", t === which);
   }
 }
 $("#tab-loot").onclick = () => tab("loot");
+$("#tab-cat").onclick = () => tab("cat");
 $("#tab-craft").onclick = () => tab("craft");
 
 for (const id of ["#px","#pz"]) $(id).onchange = () => {
@@ -551,12 +710,21 @@ for (const id of ["#px","#pz"]) $(id).onchange = () => {
 
 boot().then(() => {
   autocomplete("#q","#acl",
-    {names:()=>Object.keys(ITEMS), label:n=>ITEMS[n].cat||""},
-    n => { if (!picked.includes(n)) picked.push(n); render(); });
+    {names:()=>ENTRIES, text:e=>e.label + (e.variants.length?` (${e.variants.length})`:""),
+     label:e=>e.it.cat||""},
+    e => { if (!picked.includes(e.key)) picked.push(e.key); render(); });
+
+  chipRow("#fcat", LIMITS.category, "cat");
+  chipRow("#ftier", [...LIMITS.value, "any"], "tier");
+  chipRow("#fusg", LIMITS.usage, "usg");
+  $("#fq").oninput = renderCatalog;
+  renderCatalog();
+  const craftPool = [...new Set([...MADE_BY.keys(), ...Object.keys(ITEMS)])]
+    .map(n => ({key:n, label:human(n), it:ITEMS[n]||{}, variants:[], norm:norm(n+human(n))}));
   autocomplete("#cq","#cacl",
-    {names:()=>[...new Set([...MADE_BY.keys(), ...Object.keys(ITEMS)])],
-     label:n=>MADE_BY.has(n)?"craftable":""},
-    showCraft);
+    {names:()=>craftPool, text:e=>e.label,
+     label:e=>MADE_BY.has(e.key)?"craftable":""},
+    e => showCraft(e.key));
   render();
 }).catch(e => { $("#load").textContent = "failed to load: " + e.message; });
 </script>

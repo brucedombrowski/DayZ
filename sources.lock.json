@@ -5,6 +5,14 @@
       "branch": "master",
       "commit": "9a21bb9f5fb9c62a7ce2761402196091588133e6",
       "files": {
+        "dayzOffline.chernarusplus/areaflags.map": {
+          "bytes": 83886104,
+          "sha256": "08ecb38450eedaca16e9f531d75920b0a8410fa937f4239a33e66868b2e06d67"
+        },
+        "dayzOffline.chernarusplus/cfglimitsdefinition.xml": {
+          "bytes": 1280,
+          "sha256": "07f4dedfb53e97b6150eb2374c539604b5800b8ec4c4ae243e26419aa77d4d26"
+        },
         "dayzOffline.chernarusplus/db/types.xml": {
           "bytes": 880570,
           "sha256": "9ebe3502c20fcb8391a06cb09270571ff6e5a72f5515d374f5ed3a5f69f4d8f6"
