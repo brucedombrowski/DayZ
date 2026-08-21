@@ -33,6 +33,54 @@
           "bytes": 880570,
           "sha256": "9ebe3502c20fcb8391a06cb09270571ff6e5a72f5515d374f5ed3a5f69f4d8f6"
         },
+        "dayzOffline.chernarusplus/env/bear_territories.xml": {
+          "bytes": 7472,
+          "sha256": "9aa16e734d49d70e835ebe8161f59f0d2386602f9cfc026b42471a1826a9bbf8"
+        },
+        "dayzOffline.chernarusplus/env/cattle_territories.xml": {
+          "bytes": 22893,
+          "sha256": "e785fcb76f7c1129b98786914af7b10c8cf41b9a4fcc1dd46d35fbf790e1a0bd"
+        },
+        "dayzOffline.chernarusplus/env/fox_territories.xml": {
+          "bytes": 36525,
+          "sha256": "e74f84895d7b8bae8c11116417cd1ae93a93db1a8eb55f5a4ddba9011e6ad852"
+        },
+        "dayzOffline.chernarusplus/env/hare_territories.xml": {
+          "bytes": 86006,
+          "sha256": "885fc361597bf7e669bbc99aef6e4ff7e9553481c73d5733cd44caf09099737f"
+        },
+        "dayzOffline.chernarusplus/env/hen_territories.xml": {
+          "bytes": 41716,
+          "sha256": "8474ae86e74a0b355f2f123c306acb5b05392c083d076857e70577078b194048"
+        },
+        "dayzOffline.chernarusplus/env/pig_territories.xml": {
+          "bytes": 19179,
+          "sha256": "663a680028e17f3cb6e062731684c1a9f53492096d080a702fe667f5b7576806"
+        },
+        "dayzOffline.chernarusplus/env/red_deer_territories.xml": {
+          "bytes": 26417,
+          "sha256": "363bf229ee6a22dd5a8018532f919a485f7478eb9671fd05c60144d8bfd656d7"
+        },
+        "dayzOffline.chernarusplus/env/roe_deer_territories.xml": {
+          "bytes": 28761,
+          "sha256": "221e2cbced8f39d08b48d0e3ad82188bfa7f0491ed472519be5d854fe58a88db"
+        },
+        "dayzOffline.chernarusplus/env/sheep_goat_territories.xml": {
+          "bytes": 16198,
+          "sha256": "a63a967396b703c311725b85dc8d16cd3250ff00528e9800700d9965e8ef647a"
+        },
+        "dayzOffline.chernarusplus/env/wild_boar_territories.xml": {
+          "bytes": 21477,
+          "sha256": "aa05fba0ca6e45df639fd2e105fb56be5a8590a3d5911fafb9a3f7ca6a98b297"
+        },
+        "dayzOffline.chernarusplus/env/wolf_territories.xml": {
+          "bytes": 28943,
+          "sha256": "36738538717e378a13e0566b9888e58d06a80193506d8bd5a12bf57949aad935"
+        },
+        "dayzOffline.chernarusplus/env/zombie_territories.xml": {
+          "bytes": 82755,
+          "sha256": "2fae1457796dd1d8b71ff73609811bf164a9d158c2693ce19522331e4d32a9d1"
+        },
         "dayzOffline.chernarusplus/mapgrouppos.xml": {
           "bytes": 1538104,
           "sha256": "094538238e716e111000b5d0f0a7b63cd29987db010dedc831de2de69d750760"
@@ -43,6 +91,21 @@
         }
       },
       "repo": "BohemiaInteractive/DayZ-Central-Economy"
+    },
+    "hfe-design-system": {
+      "branch": "main",
+      "commit": "322f5914a070dc75d9aea48386d63a7c3e0bd26f",
+      "files": {
+        "design-tokens/colors.css": {
+          "bytes": 8851,
+          "sha256": "fff41407ce9fd7cda9fdb9789c94c7abdca88d1622922a9fc6ed2d8863bd36f1"
+        },
+        "design-tokens/typography.css": {
+          "bytes": 6130,
+          "sha256": "2ba9391c95a1d64e4fff4dc60841a72d8e382f65563159917ac4be4156120e21"
+        }
+      },
+      "repo": "brucedombrowski/Human-Factors-Engineering"
     },
     "script-diff": {
       "branch": "main",

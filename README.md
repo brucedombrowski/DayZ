@@ -130,37 +130,7 @@ instance origin to get true world coordinates for individual loot spots.
 
 ---
 
-## Data sources
-
-Everything below is public. **We do not vendor game data into this repo** — it is fetched
-on demand and cached locally. That keeps us honest about licensing and means an update to
-the official config flows through without a code change.
-
-### Primary — game configuration
-
-| Source | What we use it for |
-|---|---|
-| [BohemiaInteractive/DayZ-Central-Economy](https://github.com/BohemiaInteractive/DayZ-Central-Economy) | The whole pipeline. Official mission config for Chernarus+ (`dayzOffline.chernarusplus`) and Livonia (`dayzOffline.enoch`). |
-| ├ `db/types.xml` (880 KB) | Per-item nominal/min/lifetime, `category`, `tag`, `usage`, `value` (tier). |
-| ├ `mapgroupproto.xml` (1.2 MB) | Building prototypes: containers, their category/tag filters, and every loot `point` with local offset, range, height. |
-| ├ `mapgrouppos.xml` (1.5 MB) | World placement of all 11,679 building instances: `pos`, `rpy`, `a`. |
-| ├ `areaflags.map` (83 MB) | Per-cell tier / usage zones, 4096×4096. **Decoded** — format in open question 1. |
-| ├ `cfglimitsdefinition.xml` | The category/tag/usage/value lists. Declaration order = bit order in `areaflags.map`. |
-| ├ `cfgspawnabletypes.xml` | Cargo & attachment spawns — items that appear *inside* other items. |
-| ├ `cfgrandompresets.xml` | Named loot presets referenced by the above. |
-| └ `cfgeventspawns.xml`, `db/events.xml` | Dynamic events (heli crashes, police cars, convoys) — a second, non-building spawn channel. |
-| [BohemiaInteractive/DayZ-Script-Diff](https://github.com/BohemiaInteractive/DayZ-Script-Diff) | Official Enforce Script source, updated per patch. |
-| └ `scripts/4_world/classes/recipes/recipes/*.c` | 224 crafting recipes — see [CRAFTING.md](CRAFTING.md). |
-
-### Reference — documentation
-
-| Source | Notes |
-|---|---|
-| [DayZ: Central Economy setup for custom terrains](https://community.bistudio.com/wiki/DayZ:Central_Economy_setup_for_custom_terrains) (Bohemia Wiki) | Authoritative description of `mapgroupproto` / `mapgrouppos` semantics. |
-| [DayZ: Central Economy](https://community.bistudio.com/wiki/DayZ:Central_Economy) (Bohemia Wiki) | Tier model (Tier1 green → Tier4 red), usage tags, nominal/min restock behaviour. |
-| [DayZ Modding Docs — types.xml](https://community.bistudio.com/wiki/DayZ:Central_Economy_Mission_Files) | Field-by-field reference for the economy XML files. |
-
-### Map display
+## Map display
 
 | Source | Status |
 |---|---|
@@ -168,7 +138,72 @@ the official config flows through without a code change.
 | [iv-mexx/izurvive-sdk](https://github.com/iv-mexx/izurvive-sdk) | Community SDK — worth reading for their coordinate transform, unofficial. |
 | [Leaflet](https://leafletjs.com/) | Planned map engine, using `L.CRS.Simple` over a flat 15360×15360 game-coordinate space. |
 
-### Data pipeline — deterministic by design
+## Input sources — the deterministic inputs
+
+Every derived artifact traces to a pinned file. Nothing is fetched at page load; the
+browser only reads `docs/data/*`, which is generated from the table below and committed.
+
+`sources.lock.json` pins each file to a commit SHA **and** a sha256 of its contents.
+`docs/data/provenance.json` records, for every artifact, which sources produced it,
+which config authored its rules, and what each rule matched.
+
+### From `BohemiaInteractive/DayZ-Central-Economy` — `dayzOffline.chernarusplus/`
+
+| File | Produces | What we take |
+|---|---|---|
+| `db/types.xml` | `items.json` | Per-item `nominal`, `min`, `category`, `tag`, `usage`, `value`, `count_in_*` flags |
+| `mapgroupproto.xml` | `groups.json` | Building prototypes: containers, category/tag filters, loot points, **`lootmax`** |
+| `mapgrouppos.xml` | `instances.json`, `landmarks.json`, `places.json` | World position of every loot-bearing building |
+| `areaflags.map` | `instances.json`, `tiers.png`, `unique.png`, `usage_*.png` | Per-cell tier and usage zones (4096² × u32 usage, then 4096² × u8 value) |
+| `cfglimitsdefinition.xml` | `limits.json` | The flag lists — **declaration order is bit order in `areaflags.map`** |
+| `cfgEffectArea.json` | `toxic.json` | Permanent contaminated zones, true centre and radius |
+| `cfgeventspawns.xml` + `db/events.xml` | `events.json` | Heli crashes, convoys, dynamic toxic, vehicles: candidate sites + how many are live |
+| `cfgplayerspawnpoints.xml` | `spawns.json` | Fresh / hop / travel spawn points |
+| `env/*_territories.xml` (12) | `animals.json` | Wolf, bear, infected, deer, boar and other territory zones |
+
+### From `BohemiaInteractive/DayZ-Script-Diff`
+
+| File | Produces | What we take |
+|---|---|---|
+| `scripts/4_world/classes/recipes/recipes/*.c` (224) | `recipes.json` | Crafting graph — **parsed as text, never executed** ([SECURITY.md](SECURITY.md)) |
+| `scripts/3_game/playerconstants.c` | `player.json` | Energy/water drain per pace, and the 5000 maxima |
+
+### From `brucedombrowski/Human-Factors-Engineering`
+
+| File | Produces | What we take |
+|---|---|---|
+| `design-tokens/colors.css` | `docs/tokens/colors.css` | Colour tokens, dark + light, WCAG AA |
+| `design-tokens/typography.css` | `docs/tokens/typography.css` | Type scale, weights, font stacks |
+
+### Deliberately not used
+
+`cfgspawnabletypes.xml` and `cfgrandompresets.xml` (cargo and attachments inside items),
+`mapgroupcluster*.xml` (23 MB of fruit trees, berry bushes and stone piles — a real
+foraging layer, see issue), `cfgweather.xml`, `db/globals.xml`, `cfgeventgroups.xml`.
+Listed here so "unused" stays a decision rather than an oversight.
+
+## Gaps in the source data, and what we do instead
+
+Where the DayZ files simply do not carry something, we say so and hand-author a config for
+it. **Every such config is validated against the live data at build time**, and a selector
+that matches nothing fails the build — which is what keeps bespoke input from rotting.
+
+| Gap in DayZ data | Consequence | Our bespoke input | Validation |
+|---|---|---|---|
+| **No place names.** `mapgrouppos.xml` is coordinates and class names. Sign text lives in terrain PBOs. | Map cannot label anything | [`config/places.json`](config/places.json) — names + Cyrillic | Coordinates must have ≥4 buildings within 400 m. Caught Novaya Petrovka 1.2 km off. Names flagged `unverified` render dimmed. |
+| **No landmark taxonomy.** A class name says `Land_Misc_DeerStand1`, not "navigation landmark". | No way to group markers | [`config/landmarks.json`](config/landmarks.json) — ordered match rules | Every rule must match ≥1 class. Caught a dead `Hunting\|Chalet\|Cabin` rule and `watchtower` being shadowed by `military`. |
+| **No preference model.** CLE has categories, not intentions. Clothing's value is that you shred it for rags — a fact two crafting steps away. | Cannot express "come back full" | [`config/loot-profiles.json`](config/loot-profiles.json) | Every selector must resolve. Caught `Toolbox`, an item that does not exist. |
+| **No movement speeds.** `human.c` declares `GetCurrentMovementSpeed()` as `proto native`; the values are in the engine. | Travel time unknowable | Calibratable min/km slider | Labelled as estimate, with reference distances |
+| **No item sizes.** `itemSize` is in `config.cpp`, unpublished. | Cannot model real inventory | Free-slots slider | Labelled as estimate |
+| **No display names or icons.** No `stringtable.csv` published. | Class names only | — | Open, [#11](https://github.com/brucedombrowski/DayZ/issues/11) |
+| **No non-loot structures.** `mapgrouppos.xml` omits anything the CLE puts no loot in. | Tall radio masts, water towers absent | — | Documented scope limit in `config/landmarks.json` |
+
+Run `python3 tools/derive_config.py audit` to check every config against current data.
+It also **proposes** entries — `places` clusters buildings into candidate towns,
+`landmarks` lists unclassified building families — but never writes. Code derives
+structure; a human supplies the knowledge.
+
+## Data pipeline — deterministic by design
 
 **Requirement: the same lockfile must always produce byte-identical output.** Bohemia
 updates these files every patch, and this project is worthless if an upstream change

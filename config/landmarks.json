@@ -1,0 +1,172 @@
+{
+  "_about": [
+    "Landmark classification rules. Hand-authored; resolved against mapgrouppos.xml.",
+    "",
+    "TRACEABILITY. Every rule below is applied to the live building list at build time and",
+    "the result is recorded in docs/data/provenance.json: which class names each rule",
+    "matched, how many instances, and the sha256 of the source file it matched against.",
+    "A rule that matches NOTHING fails the build.",
+    "",
+    "That check exists because it already failed silently once: a `Hunting|Chalet|Cabin`",
+    "rule was added and matched zero buildings, shipping an empty layer that looked",
+    "deliberate. Counts alone would not have caught it -- the rule has to be forced to",
+    "justify itself.",
+    "",
+    "SCOPE LIMIT, and it is a real one: mapgrouppos.xml lists only buildings the Central",
+    "Economy puts loot in. Structures that hold no loot -- most tall radio masts, water",
+    "towers, chimneys, the things you actually navigate by at distance -- are NOT in any",
+    "published Bohemia data. The full terrain object list lives in the PBOs. So this file",
+    "can never be a complete landmark set, only a complete LOOT-BEARING landmark set.",
+    "",
+    "Order matters: first match wins, so specific rules precede general ones.",
+    "`optional: true` allows zero matches for rules kept for other terrains."
+  ],
+  "rules": [
+    {
+      "id": "church",
+      "label": "Church",
+      "glyph": "⛪",
+      "tone": "info",
+      "pattern": "Church|Chapel"
+    },
+    {
+      "id": "firestation",
+      "label": "Fire station",
+      "glyph": "🚒",
+      "tone": "err",
+      "pattern": "FireStation"
+    },
+    {
+      "id": "hospital",
+      "label": "Hospital",
+      "glyph": "⚕",
+      "tone": "err",
+      "pattern": "City_Hospital"
+    },
+    {
+      "id": "medtent",
+      "label": "Medical tent",
+      "glyph": "⚕",
+      "tone": "err",
+      "pattern": "Medical_Tent"
+    },
+    {
+      "id": "police",
+      "label": "Police",
+      "glyph": "🚨",
+      "tone": "info",
+      "pattern": "PoliceStation"
+    },
+    {
+      "id": "school",
+      "label": "School",
+      "glyph": "🎓",
+      "tone": "info",
+      "pattern": "City_School"
+    },
+    {
+      "id": "prison",
+      "label": "Prison",
+      "glyph": "🔒",
+      "tone": "warn",
+      "pattern": "Prison"
+    },
+    {
+      "id": "hangar",
+      "label": "Hangar",
+      "glyph": "✈",
+      "tone": "warn",
+      "pattern": "Hangar"
+    },
+    {
+      "id": "fuel",
+      "label": "Fuel station",
+      "glyph": "⛽",
+      "tone": "warn",
+      "pattern": "FuelStation"
+    },
+    {
+      "id": "factory",
+      "label": "Factory",
+      "glyph": "🏭",
+      "tone": "warn",
+      "pattern": "Factory|Sawmill"
+    },
+    {
+      "id": "radiotower",
+      "label": "Transmission tower",
+      "glyph": "📡",
+      "tone": "info",
+      "pattern": "^Land_Tower_TC|Radio_building"
+    },
+    {
+      "id": "watchtower",
+      "label": "Watchtower",
+      "glyph": "🗼",
+      "tone": "warn",
+      "pattern": "GuardTower|Watchtower"
+    },
+    {
+      "id": "military",
+      "label": "Military",
+      "glyph": "⭐",
+      "tone": "err",
+      "pattern": "^Land_Mil_|Barracks|Airfield"
+    },
+    {
+      "id": "well",
+      "label": "Well (water)",
+      "glyph": "💧",
+      "tone": "ok",
+      "pattern": "Well_Pump"
+    },
+    {
+      "id": "waterstation",
+      "label": "Water station",
+      "glyph": "🚰",
+      "tone": "ok",
+      "pattern": "Water_Station"
+    },
+    {
+      "id": "greenhouse",
+      "label": "Greenhouse",
+      "glyph": "🌱",
+      "tone": "ok",
+      "pattern": "Greenhouse|Polytunnel"
+    },
+    {
+      "id": "deerstand",
+      "label": "Deer stand",
+      "glyph": "🦌",
+      "tone": "ok",
+      "pattern": "DeerStand"
+    },
+    {
+      "id": "feedshack",
+      "label": "Feed shack",
+      "glyph": "🌽",
+      "tone": "ok",
+      "pattern": "FeedShack"
+    },
+    {
+      "id": "barn",
+      "label": "Barn",
+      "glyph": "🌾",
+      "tone": "ok",
+      "pattern": "Barn"
+    },
+    {
+      "id": "boat",
+      "label": "Boat / dock",
+      "glyph": "⛵",
+      "tone": "info",
+      "pattern": "Boat_Small|Boathouse"
+    }
+  ],
+  "_notes": {
+    "well": "Wells and water stations matter to the run planner specifically: a route costs water, and these are where you get it back.",
+    "radiotower": "Land_Tower_TC1 also matches `watchtower`. First match wins, so it lands under radiotower -- deliberate, they are the same tall structure you navigate by.",
+    "missing": "No entry can exist here for a structure absent from mapgrouppos.xml. See the scope limit above.",
+    "ordering": "watchtower precedes military deliberately: ^Land_Mil_ would otherwise consume Land_Mil_GuardTower and Land_Mil_Fortified_Nest_Watchtower, and the build's zero-match check caught exactly that."
+  }
+}

@@ -1,0 +1,233 @@
+/**
+ * Human Factors Engineering Design System - Color Tokens
+ *
+ * Dark theme (default) and light theme color palette.
+ * Based on Tailwind Zinc neutral scale with semantic color assignments.
+ * All colors meet WCAG 2.1 AA contrast requirements (4.5:1 text, 3:1 UI).
+ *
+ * Theme Switching:
+ *   Dark: <html> (default)
+ *   Light: <html data-theme="light">
+ *
+ * Author: Bruce Dombrowski
+ * Repository: https://github.com/brucedombrowski/Human-Factors-Engineering
+ * Last Updated: 2026-02-11
+ */
+
+/* ============================================================================
+   DARK THEME (Default)
+   ============================================================================ */
+
+:root {
+  /* Base colors - Tailwind Zinc scale */
+  --bg: #0a0a0a;              /* zinc-950 - main background */
+  --bg-card: #18181b;         /* zinc-900 - card/panel background */
+  --bg-card-alt: #27272a;     /* zinc-800 - alternate card background */
+
+  /* Text colors */
+  --text: #fafafa;            /* zinc-50 - primary text */
+  --text-muted: #a1a1aa;      /* zinc-400 - secondary/muted text */
+  --text-heading: #fafafa;    /* zinc-50 - headings */
+
+  /* Border colors */
+  --border: #3f3f46;          /* zinc-700 - default borders */
+  --border-accent: #3b82f6;   /* blue-500 - accent borders */
+
+  /* Table elements */
+  --th-bg: #27272a;           /* zinc-800 - table header background */
+  --hover-bg: #3f3f46;        /* zinc-700 - hover state background */
+
+  /* Semantic colors */
+  --err: #f87171;             /* red-400 - errors, destructive actions */
+  --warn: #fbbf24;            /* amber-400 - warnings, caution */
+  --ok: #4ade80;              /* green-400 - success, valid states */
+  --info: #60a5fa;            /* blue-400 - informational, neutral */
+
+  /* Row highlight states (subtle backgrounds for table rows) */
+  --row-dup: rgba(251, 191, 36, 0.08);      /* amber tint - duplicates */
+  --row-collision: rgba(248, 113, 113, 0.08); /* red tint - collisions */
+  --row-delete: rgba(239, 68, 68, 0.08);    /* red tint - marked for deletion */
+  --row-tbd: rgba(148, 163, 184, 0.08);     /* slate tint - to be determined */
+  --row-reviewed: rgba(74, 222, 128, 0.08); /* green tint - reviewed */
+  --row-undef: rgba(156, 163, 175, 0.08);   /* gray tint - undefined state */
+
+  /* IANA registry special styling */
+  --iana-bg: #1e3a8a;         /* blue-900 - IANA badge background */
+  --iana-fg: #dbeafe;         /* blue-100 - IANA badge text */
+
+  /* Badge tokens - 12 status badge types */
+  /* Format: translucent bg + high-contrast fg in dark mode */
+
+  --badge-dup-bg: rgba(251, 191, 36, 0.15);  /* amber translucent */
+  --badge-dup-fg: #fbbf24;                    /* amber-400 */
+
+  --badge-coll-bg: rgba(248, 113, 113, 0.15); /* red translucent */
+  --badge-coll-fg: #f87171;                    /* red-400 */
+
+  --badge-tbd-bg: rgba(148, 163, 184, 0.15);  /* slate translucent */
+  --badge-tbd-fg: #94a3b8;                     /* slate-400 */
+
+  --badge-ok-bg: rgba(74, 222, 128, 0.15);    /* green translucent */
+  --badge-ok-fg: #4ade80;                      /* green-400 */
+
+  --badge-unused-bg: rgba(156, 163, 175, 0.15); /* gray translucent */
+  --badge-unused-fg: #9ca3af;                    /* gray-400 */
+
+  --badge-delete-bg: rgba(239, 68, 68, 0.15);   /* red translucent */
+  --badge-delete-fg: #ef4444;                    /* red-500 */
+
+  --badge-reviewed-bg: rgba(34, 197, 94, 0.15); /* green translucent */
+  --badge-reviewed-fg: #22c55e;                  /* green-500 */
+
+  --badge-undef-bg: rgba(113, 113, 122, 0.15);  /* zinc translucent */
+  --badge-undef-fg: #71717a;                     /* zinc-500 */
+
+  --badge-info-bg: rgba(96, 165, 250, 0.15);    /* blue translucent */
+  --badge-info-fg: #60a5fa;                      /* blue-400 */
+
+  --badge-warn-bg: rgba(251, 191, 36, 0.15);    /* amber translucent */
+  --badge-warn-fg: #fbbf24;                      /* amber-400 */
+
+  --badge-err-bg: rgba(248, 113, 113, 0.15);    /* red translucent */
+  --badge-err-fg: #f87171;                       /* red-400 */
+
+  --badge-range-bg: rgba(168, 85, 247, 0.15);   /* purple translucent */
+  --badge-range-fg: #a855f7;                     /* purple-500 */
+
+  /* Link colors */
+  --link: #60a5fa;            /* blue-400 - default link */
+  --link-hover: #93c5fd;      /* blue-300 - link hover state */
+
+  /* CUI banner (Controlled Unclassified Information) */
+  --cui-bg: #502b85;          /* purple - CUI banner background */
+  --cui-fg: #ffffff;          /* white - CUI banner text */
+}
+
+/* ============================================================================
+   LIGHT THEME
+   ============================================================================ */
+
+[data-theme="light"] {
+  /* Base colors - Tailwind Zinc scale (inverted) */
+  --bg: #fafafa;              /* zinc-50 - main background */
+  --bg-card: #ffffff;         /* white - card/panel background */
+  --bg-card-alt: #f4f4f5;     /* zinc-100 - alternate card background */
+
+  /* Text colors */
+  --text: #18181b;            /* zinc-900 - primary text */
+  --text-muted: #71717a;      /* zinc-500 - secondary/muted text */
+  --text-heading: #18181b;    /* zinc-900 - headings */
+
+  /* Border colors */
+  --border: #d4d4d8;          /* zinc-300 - default borders */
+  --border-accent: #2563eb;   /* blue-600 - accent borders */
+
+  /* Table elements */
+  --th-bg: #f4f4f5;           /* zinc-100 - table header background */
+  --hover-bg: #e4e4e7;        /* zinc-200 - hover state background */
+
+  /* Semantic colors */
+  --err: #dc2626;             /* red-600 - errors, destructive actions */
+  --warn: #d97706;            /* amber-600 - warnings, caution */
+  --ok: #16a34a;              /* green-600 - success, valid states */
+  --info: #2563eb;            /* blue-600 - informational, neutral */
+
+  /* Row highlight states (solid pastel backgrounds for table rows) */
+  --row-dup: rgba(251, 191, 36, 0.12);      /* amber tint */
+  --row-collision: rgba(239, 68, 68, 0.12); /* red tint */
+  --row-delete: rgba(220, 38, 38, 0.12);    /* red tint */
+  --row-tbd: rgba(100, 116, 139, 0.12);     /* slate tint */
+  --row-reviewed: rgba(22, 163, 74, 0.12);  /* green tint */
+  --row-undef: rgba(113, 113, 122, 0.12);   /* gray tint */
+
+  /* IANA registry special styling */
+  --iana-bg: #dbeafe;         /* blue-100 - IANA badge background */
+  --iana-fg: #1e3a8a;         /* blue-900 - IANA badge text */
+
+  /* Badge tokens - 12 status badge types */
+  /* Format: solid pastel bg + dark high-contrast fg in light mode */
+
+  --badge-dup-bg: #fef3c7;    /* amber-100 */
+  --badge-dup-fg: #92400e;    /* amber-800 */
+
+  --badge-coll-bg: #fee2e2;   /* red-100 */
+  --badge-coll-fg: #991b1b;   /* red-800 */
+
+  --badge-tbd-bg: #e2e8f0;    /* slate-200 */
+  --badge-tbd-fg: #334155;    /* slate-700 */
+
+  --badge-ok-bg: #dcfce7;     /* green-100 */
+  --badge-ok-fg: #166534;     /* green-800 */
+
+  --badge-unused-bg: #f3f4f6; /* gray-100 */
+  --badge-unused-fg: #374151; /* gray-700 */
+
+  --badge-delete-bg: #fee2e2; /* red-100 */
+  --badge-delete-fg: #991b1b; /* red-800 */
+
+  --badge-reviewed-bg: #d1fae5; /* green-200 */
+  --badge-reviewed-fg: #065f46;  /* green-800 */
+
+  --badge-undef-bg: #e4e4e7;  /* zinc-200 */
+  --badge-undef-fg: #3f3f46;  /* zinc-700 */
+
+  --badge-info-bg: #dbeafe;   /* blue-100 */
+  --badge-info-fg: #1e3a8a;   /* blue-900 */
+
+  --badge-warn-bg: #fef3c7;   /* amber-100 */
+  --badge-warn-fg: #92400e;   /* amber-800 */
+
+  --badge-err-bg: #fee2e2;    /* red-100 */
+  --badge-err-fg: #991b1b;    /* red-800 */
+
+  --badge-range-bg: #f3e8ff;  /* purple-100 */
+  --badge-range-fg: #6b21a8;  /* purple-800 */
+
+  /* Link colors */
+  --link: #2563eb;            /* blue-600 - default link */
+  --link-hover: #1d4ed8;      /* blue-700 - link hover state */
+
+  /* CUI banner (Controlled Unclassified Information) */
+  --cui-bg: #502b85;          /* purple - CUI banner background (same in both themes) */
+  --cui-fg: #ffffff;          /* white - CUI banner text (same in both themes) */
+}
+
+/* ============================================================================
+   USAGE EXAMPLES
+   ============================================================================
+
+   Basic styling:
+   body {
+     background: var(--bg);
+     color: var(--text);
+   }
+
+   Cards/panels:
+   .card {
+     background: var(--bg-card);
+     border: 1px solid var(--border);
+   }
+
+   Semantic colors:
+   .error { color: var(--err); }
+   .warning { color: var(--warn); }
+   .success { color: var(--ok); }
+
+   Badges:
+   .badge-duplicate {
+     background: var(--badge-dup-bg);
+     color: var(--badge-dup-fg);
+   }
+
+   Table rows:
+   tr.duplicate { background: var(--row-dup); }
+
+   Links:
+   a {
+     color: var(--link);
+   }
+   a:hover {
+     color: var(--link-hover);
+   }
+
+   ============================================================================ */

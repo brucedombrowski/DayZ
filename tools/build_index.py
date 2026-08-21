@@ -451,26 +451,7 @@ def render_usage_pngs(outdir: Path, area, usage_names: list[str], down: int = 4)
     return made
 
 
-# Landmarks, derived from building class names -- the only place the data says
-# what a building actually IS. Order matters: first match wins, so specific
-# patterns (Mil_FireStation) must precede general ones (Mil_).
-LANDMARKS = [
-    ("church",      "Church",        "\u26ea", "#c9b26a", r"Church|Chapel"),
-    ("firestation", "Fire station",  "\U0001f692", "#e08a3c", r"FireStation"),
-    ("hospital",    "Hospital",      "\u2695",  "#e07a9a", r"City_Hospital"),
-    ("police",      "Police",        "\U0001f6a8", "#6a86d6", r"PoliceStation"),
-    ("school",      "School",        "\U0001f393", "#9a8ad6", r"City_School"),
-    ("prison",      "Prison",        "\U0001f512", "#9aa088", r"Prison"),
-    ("hangar",      "Hangar",        "\u2708",  "#8ab4d0", r"Hangar"),
-    ("fuel",        "Fuel station",  "\u26fd", "#d6b44a", r"FuelStation"),
-    ("factory",     "Factory",       "\U0001f3ed", "#a98ad6", r"Factory"),
-    ("military",    "Military",      "\u2b50", "#d2694a", r"^Land_Mil_|Barracks|Airfield"),
-    ("medtent",     "Medical tent",  "\u2695",  "#e07a9a", r"Medical_Tent"),
-    ("deerstand",   "Deer stand",    "\U0001f98c", "#8fae6a", r"DeerStand"),
-    ("barn",        "Barn",          "\U0001f33e", "#c2a15a", r"Barn"),
-    ("boat",        "Boat / dock",   "\u26f5", "#6aaed6", r"Boat_Small|Boathouse"),
-    ("watchtower",  "Watchtower",    "\U0001f5fc", "#a0a888", r"Tower_TC|GuardTower|Watchtower"),
-]
+# Landmark rules now live in config/landmarks.json -- see resolve_landmarks().
 
 
 def parse_effect_areas(data: bytes) -> list[dict]:
@@ -698,22 +679,95 @@ def resolve_places(cfg: dict, rows: list[list[int]]) -> list[dict]:
     return out
 
 
-def build_landmarks(names: list[str], rows: list[list[int]]) -> dict:
-    pats = [(k, lbl, glyph, col, re.compile(rx, re.I)) for k, lbl, glyph, col, rx in LANDMARKS]
-    kinds, pts = [], []
-    idx = {}
-    for k, lbl, glyph, col, _ in pats:
-        idx[k] = len(kinds)
-        kinds.append({"id": k, "label": lbl, "glyph": glyph, "colour": col, "n": 0})
+# Species we surface, and whether they are a threat or a meal. Wolves and bears
+# change how you route; hens do not.
+SPECIES = {
+    "wolf":       ("Wolves",     "\U0001f43a", "err",  True),
+    "bear":       ("Bears",      "\U0001f43b", "err",  True),
+    "zombie":     ("Infected",   "\U0001f9df", "warn", True),
+    "wild_boar":  ("Wild boar",  "\U0001f417", "ok",   False),
+    "red_deer":   ("Red deer",   "\U0001f98c", "ok",   False),
+    "roe_deer":   ("Roe deer",   "\U0001f98c", "ok",   False),
+    "cattle":     ("Cattle",     "\U0001f404", "ok",   False),
+    "sheep_goat": ("Sheep/goat", "\U0001f411", "ok",   False),
+    "pig":        ("Pigs",       "\U0001f416", "ok",   False),
+    "hen":        ("Hens",       "\U0001f414", "ok",   False),
+    "hare":       ("Hare",       "\U0001f407", "ok",   False),
+    "fox":        ("Fox",        "\U0001f98a", "info", False),
+}
+
+
+def parse_territories(cache_dir: Path) -> list[dict]:
+    """env/*_territories.xml -> animal zones.
+
+    Each territory is a set of circular zones: Water, Rest and HuntingGround.
+    HuntingGround is where the animal actually roams and is the one that matters
+    for routing -- wolves and bears are a reason to go around, deer are a reason
+    to go through.
+    """
+    out = []
+    for key, (label, glyph, tone, hazard) in SPECIES.items():
+        f = cache_dir / "env" / f"{key}_territories.xml"
+        if not f.is_file():
+            continue
+        zones = []
+        for terr in ET.fromstring(f.read_bytes()).findall("territory"):
+            for z in terr.findall("zone"):
+                try:
+                    zones.append([round(float(z.get("x"))), round(float(z.get("z"))),
+                                  round(float(z.get("r"))), z.get("name", "")])
+                except (TypeError, ValueError):
+                    continue
+        if not zones:
+            continue
+        zones.sort()
+        out.append({"id": key, "label": label, "glyph": glyph, "tone": tone,
+                    "hazard": hazard, "zones": zones,
+                    "roam": sum(1 for z in zones if z[3] == "HuntingGround")})
+    out.sort(key=lambda a: (not a["hazard"], a["label"]))
+    return out
+
+
+def resolve_landmarks(cfg: dict, names: list[str], rows: list[list[int]]) -> tuple[dict, list]:
+    """config/landmarks.json -> markers, plus a per-rule provenance record.
+
+    Returns (layer data, trace). The trace names every class each rule matched and
+    how many instances it produced, so the question "where did this marker come
+    from" has a written answer rather than requiring someone to re-read a regex.
+
+    A rule matching nothing fails the build unless explicitly `optional`. That is
+    not hypothetical: a `Hunting|Chalet|Cabin` rule shipped here matching zero
+    buildings, and a silent empty layer looks exactly like a deliberate one.
+    """
+    pats = [(r, re.compile(r["pattern"], re.I)) for r in cfg["rules"]]
+    kinds, pts, trace = [], [], []
+    idx, matched = {}, {r["id"]: set() for r in cfg["rules"]}
+
+    for r, _ in pats:
+        idx[r["id"]] = len(kinds)
+        kinds.append({"id": r["id"], "label": r["label"], "glyph": r["glyph"],
+                      "tone": r.get("tone", "info"), "n": 0})
+
     for ti, x, z, _tier, _use in rows:
         b = names[ti]
-        for k, _lbl, _g, _c, rx in pats:
+        for r, rx in pats:                       # first match wins; order is meaningful
             if rx.search(b):
-                pts.append([idx[k], x, z])
-                kinds[idx[k]]["n"] += 1
+                pts.append([idx[r["id"]], x, z])
+                kinds[idx[r["id"]]]["n"] += 1
+                matched[r["id"]].add(b)
                 break
+
+    dead = [r["id"] for r, _ in pats
+            if not matched[r["id"]] and not r.get("optional")]
+    if dead:
+        raise ValueError("landmarks.json rules matched nothing: " + ", ".join(dead))
+
+    for r, _ in pats:
+        trace.append({"rule": r["id"], "pattern": r["pattern"],
+                      "classes": sorted(matched[r["id"]]),
+                      "instances": kinds[idx[r["id"]]]["n"]})
     pts.sort()
-    return {"kinds": kinds, "points": pts}
+    return {"kinds": kinds, "points": pts}, trace
 
 
 RE_CLASS = re.compile(r"class\s+(\w+)\s+extends\s+RecipeBase")
@@ -803,8 +857,11 @@ def cmd_build() -> int:
     print(f"  docs/data/unique.png  {(OUT/'unique.png').stat().st_size:,}b  ({uq} cells)")
     zones = render_usage_pngs(OUT, area, limits["usage"])
     print(f"  docs/data/usage_*.png  {len(zones)} zone overlays")
-    landmarks = build_landmarks(names, rows)
+    landmarks, lm_trace = resolve_landmarks(
+        json.loads((ROOT / "config" / "landmarks.json").read_text()), names, rows)
     write_json(OUT / "landmarks.json", landmarks)
+    animals = parse_territories(ce)
+    write_json(OUT / "animals.json", animals)
     places = resolve_places(
         json.loads((ROOT / "config" / "places.json").read_text()), rows)
     write_json(OUT / "places.json", places)
@@ -832,6 +889,62 @@ def cmd_build() -> int:
         "events": sum(len(e["points"]) for e in events),
         "tierResolved": True,
     })
+
+    # --- provenance -----------------------------------------------------------
+    # "Where did this list come from" must have a written answer. For every derived
+    # artifact: which source files (by sha256 at a pinned commit), which config
+    # authored the rules, and what each rule actually matched.
+    prov = {
+        "generator": "tools/build_index.py",
+        "dayzBuild": lock.get("dayz_build"),
+        "sources": {
+            name: {
+                "repo": src["repo"],
+                "commit": src["commit"],
+                "files": {p: {"sha256": m.get("sha256"), "bytes": m.get("bytes")}
+                          for p, m in sorted(src["files"].items())},
+            } for name, src in sorted(lock["sources"].items())
+        },
+        "artifacts": [
+            {"file": "items.json", "from": ["db/types.xml"], "config": None,
+             "count": counts["items"]},
+            {"file": "groups.json", "from": ["mapgroupproto.xml"], "config": None,
+             "count": counts["groups"],
+             "note": "eff = min(points, container lootmax), scaled by group lootmax"},
+            {"file": "instances.json",
+             "from": ["mapgrouppos.xml", "areaflags.map", "cfglimitsdefinition.xml"],
+             "config": None, "count": counts["instances"],
+             "note": "tier/usage flags resolved per building from areaflags.map"},
+            {"file": "landmarks.json", "from": ["mapgrouppos.xml"],
+             "config": "config/landmarks.json", "rules": lm_trace,
+             "count": len(landmarks["points"])},
+            {"file": "places.json", "from": ["mapgrouppos.xml"],
+             "config": "config/places.json", "count": len(places),
+             "note": "coordinates validated against building density; names are human input"},
+            {"file": "profiles.json", "from": ["db/types.xml"],
+             "config": "config/loot-profiles.json", "count": len(profiles["profiles"]),
+             "rules": [{"rule": p["id"], "items": len(p["items"])}
+                       for p in profiles["profiles"]]},
+            {"file": "animals.json",
+             "from": [f"env/{k}_territories.xml" for k in sorted(SPECIES)],
+             "config": None, "count": sum(len(a["zones"]) for a in animals)},
+            {"file": "events.json", "from": ["cfgeventspawns.xml", "db/events.xml"],
+             "config": None, "count": sum(len(e["points"]) for e in events)},
+            {"file": "spawns.json", "from": ["cfgplayerspawnpoints.xml"],
+             "config": None, "count": sum(len(s["points"]) for s in pspawn)},
+            {"file": "toxic.json", "from": ["cfgEffectArea.json"], "config": None,
+             "count": len(toxic)},
+            {"file": "recipes.json",
+             "from": ["scripts/4_world/classes/recipes/recipes/*.c"], "config": None,
+             "count": len(recipes)},
+            {"file": "player.json", "from": ["scripts/3_game/playerconstants.c"],
+             "config": None, "count": len(pconst)},
+            {"file": "tiers.png / unique.png / usage_*.png", "from": ["areaflags.map"],
+             "config": None, "count": 1 + 1 + len(zones),
+             "note": "4096^2 planes downsampled 4x; highest tier bit per block"},
+        ],
+    }
+    write_json(OUT / "provenance.json", prov)
 
     print(f"\n  {counts['items']} items, {counts['groups']} building types, "
           f"{counts['instances']} instances, {len(recipes)} recipes")
