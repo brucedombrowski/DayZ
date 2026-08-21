@@ -186,19 +186,58 @@ Three commands:
 |---|---|
 | `sync` | Fetch exactly the pinned commits, verify every `sha256`, fail loudly on mismatch. Never silently accepts different bytes. |
 | `build` | Parse cache → derived JSON index. Pure function of the cache: no network, no clock, no `Date.now()`, stable key ordering. Re-running must yield an identical file. |
-| `check-upstream` | Compare pins against upstream `master` and report *what changed* — "`types.xml`: 14 items added, 3 tier changes" — as a reviewable diff. Never auto-updates. |
+| `check-upstream` | Compare pins against upstream, classify the change by blast radius, and either auto-update or escalate. Runs on a schedule. |
 
 Rules that make this hold:
 
 - **Parsers are pure.** Input bytes → output structure. No I/O, no ambient state. This is
   what makes them testable and the output reproducible.
-- **Derived output is committed**, so a data change shows up as a reviewable diff in a PR
-  rather than as a silent behaviour change in production.
+- **Derived output is committed**, so a data change shows up as a reviewable diff.
 - **Golden tests** lock the numbers this README cites (134 sledgehammer building types,
-  4,821 instances, 32,624 points; 224 recipe files, 133 craftable outputs). If a Bohemia
-  update moves them, CI fails and we look at it deliberately.
-- **`check-upstream` runs on a schedule**, opens an issue or PR with the diff, and a human
-  decides. Updating the pin is an explicit act.
+  4,821 instances, 32,624 points; 224 recipe files, 133 craftable outputs).
+
+### Auto-ingest — tiered by blast radius
+
+A Bohemia commit should not break us and mostly should not need us. Requiring a human for
+every `nominal` tweak means the tool is perpetually stale, which is its own failure. So the
+bot classifies each change and only escalates what actually warrants it:
+
+| Tier | What changed | Action |
+|---|---|---|
+| 🟢 **Green** | Values move within the existing schema — `nominal`, `min`, `lifetime`, `restock`, `cost`. Items added/removed. Building instances added/moved. All golden invariants hold within tolerance. | **Auto-update the lock, rebuild, auto-merge, deploy.** No human. |
+| 🟡 **Yellow** | New enum member (`usage`, `category`, `tag`, `value`/tier). Recipe file added/removed. Building *type* added/removed. A golden number moves beyond tolerance. | **Open a PR** with the semantic diff. Site keeps serving the last good build. |
+| 🔴 **Red** | Schema shape changed, parse failure, file missing, `areaflags.map` header differs, sanity bound violated. | **Fail closed.** Alert, no deploy, last good build stays up. |
+
+Green is the common case and is genuinely safe because the schema is unchanged — we are
+ingesting different *numbers*, not different *structure*. Yellow exists because a new tier
+or usage tag can silently change what our filters match, which is exactly the class of
+change that would send you to the wrong town without anyone noticing.
+
+Determinism survives this: the bot changes the **lockfile**, and the build stays a pure
+function of it. Any past build is reproducible from its lock. "Automatic" and
+"deterministic" are not in tension — what would break determinism is building against a
+moving `master`, which we never do.
+
+### Security
+
+We ingest third-party data automatically, so the trust boundary needs to be explicit.
+
+- **We never execute upstream content.** Recipe `.c` files are *parsed as text* — pattern
+  extraction only. Enforce Script is never compiled, `eval`'d, or run. This is the single
+  most important property, and it is a design constraint, not a precaution.
+- **XML is parsed with a hardened reader**: DTDs and external entities disabled (XXE),
+  entity expansion capped (billion-laughs). Non-negotiable given files arrive unattended.
+- **Resource bounds.** `areaflags.map` is 83 MB and the cluster files 4.6 MB each. Declared
+  size ceilings per file; exceeding one is 🔴, not an OOM.
+- **Provenance is pinned.** Fetch by commit SHA from the canonical `BohemiaInteractive/*`
+  repos over HTTPS, record the SHA and per-file `sha256` of exactly what we ingested. If
+  upstream history is rewritten, checksums mismatch and we fail closed.
+- **Residual risk: upstream account compromise.** A malicious commit to Bohemia's own repo
+  would pass checksums — they are integrity, not authenticity. Mitigation is that the blast
+  radius is small: no execution, and the schema/invariant checks in 🟡/🔴 catch structural
+  tampering. Worst realistic case is wrong loot markers, not code execution.
+- **CI permissions are least-privilege**: the sync job gets a scoped token, cannot push to
+  `main` directly on 🟡/🔴, and its output is a data file — never code.
 
 ### Licensing posture
 
@@ -312,7 +351,7 @@ Open: how to weight `nominal`/`min` (how many exist map-wide) and container comp
 
 ### 4. Version drift
 
-Resolved in approach — pinned lockfile + scheduled `check-upstream`, see
+Resolved in approach — pinned lockfile + tiered auto-ingest, see
 [Data pipeline](#data-pipeline--deterministic-by-design). Still open: **PS5 Official may lag
 the PC build** that `DayZ-Script-Diff` and `DayZ-Central-Economy` track. We need to
 establish the current console build number and pin to the matching tag, not to `master`.
