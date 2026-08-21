@@ -146,7 +146,7 @@
   .leaflet-popup-content a{color:var(--accent)}
   .tierimg{image-rendering:auto;mix-blend-mode:screen}
   .lbl{
-    font-size:10.5px;color:#7d8468;text-shadow:0 0 3px #000,0 0 3px #000;
+    font-size:11px;color:#aab392;font-weight:600;text-shadow:0 0 3px #000,0 0 3px #000;
     white-space:nowrap;pointer-events:none;
   }
   #layers{position:absolute;left:10px;bottom:10px;z-index:500}
@@ -469,53 +469,98 @@ function search(pl){
    CSS-transformed during zoom animation, which would drag a non-animated child
    along and smear it; sitting outside them, we simply redraw in container space.
    Redraws are rAF-coalesced so a drag costs at most one pass per frame. */
+/* Canvas layer drawn in LAYER coordinates, inside Leaflet's overlay pane.
+
+   Drawing in container coordinates and redrawing on every move/zoom looks correct
+   at rest but drifts in motion: the redraw lands a frame late while panning, and
+   during Leaflet's animated zoom the pane is CSS-transformed while a
+   container-space bitmap is not, so the dots slide off the markers.
+
+   Positioning the canvas at a fixed layer point instead means Leaflet's own pane
+   transform pans it for free — pixel-exact, zero redraws — and `_animateZoom`
+   scales the existing bitmap through the zoom animation the same way L.Canvas
+   does. We only rasterise again on moveend/zoomend.
+
+   PAD gives us bitmap beyond the viewport so a drag does not expose blank edges
+   before the redraw lands. */
+const PAD = 220;
+
 class Dots extends L.Layer {
   onAdd(m){
     this._m = m;
-    this._c = L.DomUtil.create("canvas");
-    Object.assign(this._c.style, {position:"absolute", left:0, top:0,
-                                 pointerEvents:"none", zIndex:200});
-    m.getContainer().appendChild(this._c);
-    this._on = () => this.redraw();
-    m.on("move zoom moveend zoomend resize viewreset", this._on);
-    this.redraw();
+    this._c = L.DomUtil.create("canvas", "leaflet-layer leaflet-zoom-animated");
+    this._c.style.pointerEvents = "none";
+    m.getPanes().overlayPane.appendChild(this._c);
+    m.on("moveend zoomend resize viewreset", this._reset, this);
+    if (m.options.zoomAnimation && L.Browser.any3d)
+      m.on("zoomanim", this._animateZoom, this);
+    this._reset();
     return this;
   }
-  onRemove(m){ this._c.remove(); m.off("move zoom moveend zoomend resize viewreset", this._on); }
-  setData(pl){ this._pl = pl; this.redraw(); }
-  redraw(){
-    if (this._raf) return;
-    this._raf = requestAnimationFrame(() => { this._raf = 0; this._draw(); });
+  onRemove(m){
+    this._c.remove();
+    m.off("moveend zoomend resize viewreset", this._reset, this);
+    m.off("zoomanim", this._animateZoom, this);
   }
-  _draw(){
+  setData(pl){ this._pl = pl; this._reset(); }
+
+  /* Track the zoom animation by re-deriving where our top-left lands at the
+     target zoom. Layer coords are relative to a pixel origin that moves with the
+     view, so we keep the canvas corner in ABSOLUTE projected pixels, scale that
+     to the new zoom, and subtract the incoming pixel origin. */
+  _animateZoom(e){
+    const m = this._m;
+    const scale = m.getZoomScale(e.zoom, this._zoom);
+    const offset = this._abs.multiplyBy(scale).subtract(m._getNewPixelOrigin(e.center, e.zoom));
+    L.DomUtil.setTransform(this._c, offset, scale);
+  }
+
+  _reset(){
     const m = this._m;
     if (!m) return;
-    const sz = m.getSize(), dpr = window.devicePixelRatio || 1;
-    if (this._c.width !== sz.x*dpr || this._c.height !== sz.y*dpr){
-      this._c.width = sz.x*dpr; this._c.height = sz.y*dpr;
-      this._c.style.width = sz.x+"px"; this._c.style.height = sz.y+"px";
-    }
-    const g = this._c.getContext("2d");
-    g.setTransform(dpr,0,0,dpr,0,0);
-    g.clearRect(0,0,sz.x,sz.y);
+    const size = m.getSize().add([PAD*2, PAD*2]);
+    const min = m.containerPointToLayerPoint([0,0]).subtract([PAD, PAD]);
+    this._abs = min.add(m.getPixelOrigin());   // absolute, zoom-independent anchor
+    this._zoom = m.getZoom();
 
-    // One projection of the map origin plus a scale factor beats calling
-    // latLngToContainerPoint 11,360 times per frame.
-    const o = m.latLngToContainerPoint([0,0]);
-    const u = m.latLngToContainerPoint([1000,1000]);
-    const sx = (u.x - o.x)/1000, sz_ = (u.y - o.y)/1000;
+    const dpr = window.devicePixelRatio || 1;
+    if (this._c.width !== size.x*dpr || this._c.height !== size.y*dpr){
+      this._c.width = size.x*dpr; this._c.height = size.y*dpr;
+      this._c.style.width = size.x + "px"; this._c.style.height = size.y + "px";
+    }
+    L.DomUtil.setPosition(this._c, min);   // clears any leftover zoom scale
+    this._draw(size, min, dpr);
+  }
+
+  _draw(size, min, dpr){
+    const m = this._m;
+    const g = this._c.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, size.x, size.y);
+
+    // Project two reference points once, then place 11,360 dots by affine scale
+    // rather than projecting per row.
+    //
+    // Must use project(), NOT latLngToLayerPoint(): the latter _round()s to whole
+    // pixels, and deriving a scale from two rounded points 1000 units apart then
+    // extrapolating across a 15,360 m map multiplies that rounding by ~15 --
+    // measured at 4.4 px of drift in the far corner at low zoom.
+    const po = m.getPixelOrigin();
+    const o = m.project([0,0]).subtract(po).subtract(min);
+    const u = m.project([1000,1000]).subtract(po).subtract(min);
+    const sx = (u.x - o.x)/1000, sy = (u.y - o.y)/1000;
     const r = Math.max(0.55, Math.min(3, 0.9 * Math.pow(2, m.getZoom())));
 
-    for (const pass of [0,1]){                 // draw hot dots last, on top
-      g.fillStyle = pass ? "#b8c94a" : "#3a4230";
+    for (const pass of [0,1]){                 // hot dots drawn last, on top
+      g.fillStyle = pass ? "#cfe063" : "#525e3f";
       g.beginPath();
       for (const row of INST.rows){
         const hot = this._pl ? rowPoints(row, this._pl) > 0 : false;
         if ((pass === 1) !== hot) continue;
-        const px = o.x + row[1]*sx, py = o.y + row[2]*sz_;
-        if (px < -4 || py < -4 || px > sz.x+4 || py > sz.y+4) continue;
+        const px = o.x + row[1]*sx, py = o.y + row[2]*sy;
+        if (px < -4 || py < -4 || px > size.x+4 || py > size.y+4) continue;
         const rr = pass ? r*1.6 : r;
-        g.moveTo(px+rr, py);
+        g.moveTo(px + rr, py);
         g.arc(px, py, rr, 0, 6.2832);
       }
       g.fill();
@@ -533,10 +578,14 @@ function initMap(){
   dots = new Dots().addTo(map);
 
   for (const [nm,x,z] of TOWNS)
-    L.marker([z,x],{opacity:0, icon:L.divIcon({className:"", html:`<div class="lbl">${nm}</div>`,
-      iconSize:[0,0]})}).addTo(map);
+    L.marker([z,x], {interactive:false, keyboard:false, icon:L.divIcon({
+      className:"", html:`<div class="lbl">${nm}</div>`, iconSize:[0,0]})}).addTo(map);
 
   buildLayerPanel();
+
+  applyHash();
+  if (new URLSearchParams(location.hash.slice(1)).get("selftest")) selfTest();
+  map.on("moveend zoomend", writeHash);
 
   map.on("mousemove", e => {
     $("#hud").textContent = `x ${Math.round(e.latlng.lng)}  z ${Math.round(e.latlng.lat)}`;
@@ -554,9 +603,10 @@ function overlay(url, opacity){
     {opacity, interactive:false, className:"tierimg"});
 }
 
-function toggleBtn(host, label, colour, onOn, onOff){
+function toggleBtn(host, label, colour, onOn, onOff, id){
   const b = document.createElement("button");
   b.textContent = label;
+  if (id) b.dataset.lid = id;
   b.setAttribute("aria-pressed","false");
   if (colour) b.style.borderLeft = `3px solid ${colour}`;
   b.onclick = () => {
@@ -565,6 +615,7 @@ function toggleBtn(host, label, colour, onOn, onOff){
     b.style.background = on ? (colour || "var(--accent2)") : "";
     b.style.color = on ? "#0f1108" : "";
     on ? onOn() : onOff();
+    if (map) writeHash();
   };
   host.appendChild(b);
 }
@@ -579,12 +630,12 @@ function buildLayerPanel(){
 
   tierLayer = overlay("data/tiers.png", 0.42);
   toggleBtn($("#layTier"), "Tier 1–4", "#d7be3c",
-    () => tierLayer.addTo(map), () => tierLayer.remove());
+    () => tierLayer.addTo(map), () => tierLayer.remove(), "tier");
 
   for (const [name, z] of Object.entries(META.zones || {})){
     const lyr = overlay(`data/usage_${name}.png`, 0.5);
     toggleBtn($("#layZone"), name, `rgb(${z.rgb.join(",")})`,
-      () => lyr.addTo(map), () => lyr.remove());
+      () => lyr.addTo(map), () => lyr.remove(), name);
   }
 
   /* Permanent contaminated zones, drawn at their true radius from
@@ -602,7 +653,7 @@ function buildLayerPanel(){
       .addTo(haz);
   }
   toggleBtn($("#layHaz"), `\u2623 Toxic zones (${TOXIC.length})`, "#8fd633",
-    () => haz.addTo(map), () => haz.remove());
+    () => haz.addTo(map), () => haz.remove(), "toxic");
 
   for (const k of LANDMARKS.kinds){
     if (!k.n) continue;
@@ -611,8 +662,57 @@ function buildLayerPanel(){
         .map(([, x, z]) => L.marker([z,x], {interactive:false, icon:L.divIcon({
           className:"", html:`<div class="mk">${k.glyph}</div>`, iconSize:[14,14]})})));
     toggleBtn($("#layMark"), `${k.glyph} ${k.label} (${k.n})`, k.colour,
-      () => grp.addTo(map), () => grp.remove());
+      () => grp.addTo(map), () => grp.remove(), k.id);
   }
+}
+
+/* #v=x,z,zoom&l=tier,Military,church — shareable view state, and how the
+   headless screenshot test lands on an exact view. */
+/* #selftest=1 -- compare where the dot canvas paints a building against where
+   Leaflet projects the same building. Any drift shows up here as pixels. */
+function selfTest(){
+  setTimeout(() => {
+    const c = dots._c, min = dots._abs.subtract(map.getPixelOrigin());
+    const po = map.getPixelOrigin();
+    const o  = map.project([0,0]).subtract(po).subtract(min);
+    const u  = map.project([1000,1000]).subtract(po).subtract(min);
+    const sx = (u.x-o.x)/1000, sy = (u.y-o.y)/1000;
+    const cpos = L.DomUtil.getPosition(c);
+    let worst = 0, n = 0, sample = "";
+    for (let i = 0; i < INST.rows.length; i += 37){
+      const r = INST.rows[i];
+      // where the canvas paints it, converted to container space
+      const canvasPt = L.point(o.x + r[1]*sx, o.y + r[2]*sy).add(cpos);
+      const paint = map.layerPointToContainerPoint(canvasPt);
+      // where Leaflet says it belongs
+      const truth = map.project([r[2], r[1]]).subtract(po)
+        .add(map.getPixelOrigin()).subtract(map.getPixelBounds().min);
+      const d = paint.distanceTo(truth);
+      if (d > worst){ worst = d; sample = `${INST.types[r[0]]}@${r[1]},${r[2]}`; }
+      n++;
+    }
+    document.title = `SELFTEST n=${n} maxErr=${worst.toFixed(3)}px ${worst<0.5?"PASS":"FAIL "+sample}`;
+  }, 700);
+}
+
+function writeHash(){
+  const c = map.getCenter();
+  const on = [...document.querySelectorAll("#layPanel button[aria-pressed=true]")]
+    .map(b => b.dataset.lid).filter(Boolean);
+  const h = `#v=${Math.round(c.lng)},${Math.round(c.lat)},${map.getZoom()}` +
+            (on.length ? `&l=${on.join(",")}` : "");
+  history.replaceState(null, "", h);
+}
+
+function applyHash(){
+  const q = new URLSearchParams(location.hash.slice(1));
+  const v = (q.get("v")||"").split(",").map(Number);
+  if (v.length === 3 && v.every(Number.isFinite)) map.setView([v[1], v[0]], v[2]);
+  const want = new Set((q.get("l")||"").split(",").filter(Boolean));
+  if (want.size) requestAnimationFrame(() =>
+    document.querySelectorAll("#layPanel button").forEach(b => {
+      if (want.has(b.dataset.lid) && b.getAttribute("aria-pressed") !== "true") b.click();
+    }));
 }
 
 function setPos(x, z){
