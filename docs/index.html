@@ -144,10 +144,22 @@
     background:var(--panel2);color:var(--text);border:1px solid var(--line)}
   .leaflet-popup-content{margin:9px 11px;font-size:13px}
   .leaflet-popup-content a{color:var(--accent)}
+  .tierimg{image-rendering:auto;mix-blend-mode:screen}
   .lbl{
     font-size:10.5px;color:#7d8468;text-shadow:0 0 3px #000,0 0 3px #000;
     white-space:nowrap;pointer-events:none;
   }
+  #layers{
+    position:absolute;left:10px;bottom:10px;z-index:500;display:flex;align-items:center;
+    gap:8px;background:#12140fdd;border:1px solid var(--line);border-radius:5px;padding:5px 8px;
+  }
+  #layers button{
+    background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:4px;
+    font:inherit;font-size:11.5px;padding:2px 8px;cursor:pointer;
+  }
+  #layers button[aria-pressed=true]{background:var(--accent2);color:#0f1108;font-weight:600}
+  #tierKey{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:3px}
+  #tierKey i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-left:5px}
   #hud{
     position:absolute;right:10px;bottom:10px;z-index:500;background:#12140fdd;
     border:1px solid var(--line);border-radius:5px;padding:5px 9px;
@@ -225,6 +237,13 @@
   </div>
   <div id="map"></div>
 </div>
+<div id="layers">
+  <button id="tTier" aria-pressed="false">Tier zones</button>
+  <span id="tierKey" hidden>
+    <i style="background:#5aaa46"></i>T1 <i style="background:#d7be3c"></i>T2
+    <i style="background:#e18c2d"></i>T3 <i style="background:#d24137"></i>T4
+  </span>
+</div>
 <div id="hud">—</div>
 <div id="load">loading map data…</div>
 
@@ -256,7 +275,7 @@ let ITEMS, GROUPS, INST, RECIPES, META, LIMITS, MADE_BY;
 let ENTRIES = [], ENTRY = {}, NAME2ENTRY = {};
 /* Bit order in areaflags.map is the declaration order in cfglimitsdefinition.xml. */
 let TIERBIT = {};
-let map, pinMarker = null, hotLayer = null, pos = null;
+let map, pinMarker = null, tierLayer = null, pos = null;
 const picked = [];
 
 /* ---------- data ---------- */
@@ -502,6 +521,18 @@ function initMap(){
     L.marker([z,x],{opacity:0, icon:L.divIcon({className:"", html:`<div class="lbl">${nm}</div>`,
       iconSize:[0,0]})}).addTo(map);
 
+  /* Tier overlay: the areaflags value plane, downsampled 4x to 1024^2 at build
+     time. 12 KB, because tier regions are large and flat. Image row 0 is north,
+     matching Leaflet's bounds convention. */
+  tierLayer = L.imageOverlay("data/tiers.png", [[0,0],[SIZE,SIZE]],
+    {opacity:0.42, interactive:false, className:"tierimg"});
+  $("#tTier").onclick = () => {
+    const on = $("#tTier").getAttribute("aria-pressed") !== "true";
+    $("#tTier").setAttribute("aria-pressed", String(on));
+    $("#tierKey").hidden = !on;
+    on ? tierLayer.addTo(map) : tierLayer.remove();
+  };
+
   map.on("mousemove", e => {
     $("#hud").textContent = `x ${Math.round(e.latlng.lng)}  z ${Math.round(e.latlng.lat)}`;
   });
@@ -559,7 +590,10 @@ function render(){
     return;
   }
   const nomLine = pl.map(p =>
-    `${p.e.label}: <b>${p.it.nom}</b> on the map at once (min ${p.it.min})`).join(" · ");
+    `${p.e.label}: <b>${p.it.nom}</b> on the map at once (min ${p.it.min})` +
+    (hoardSensitive(p.it)
+      ? ` — <span style="color:var(--warn)">stashed copies count against that</span>`
+      : ` — stashed copies don't count, so it keeps respawning`)).join("<br>");
 
   out.innerHTML = `<label class="fld">${res.length} hotspots
       ${pos ? "· "+SORTS[SORT].label.toLowerCase() : "· set your position to rank by distance"}</label>
@@ -608,6 +642,14 @@ function chipRow(sel, values, group){
   });
 }
 
+/* If any of count_in_cargo/hoarder/player is set, a stashed copy still counts
+   toward `nominal`, so hoarding really does suppress respawns. 1,847 of 1,970
+   items have all three clear -- for those, stashing frees the economy to spawn a
+   replacement. The exceptions are almost entirely storage itself. */
+const hoardSensitive = it => !!it.cnt && (it.cnt.cargo || it.cnt.hoarder || it.cnt.player);
+const hoardTag = it => hoardSensitive(it)
+  ? ` · <span style="color:var(--warn)" title="Stashed copies still count toward the map cap, so hoarding suppresses respawns">capped when stashed</span>` : "";
+
 function renderCatalog(){
   const q = $("#fq").value.trim();
   let list = ENTRIES.filter(e => matches(e, q));
@@ -626,7 +668,7 @@ function renderCatalog(){
             ? ` <small style="color:var(--dim)">${e.variants.length} colours</small>` : ""}
           <br><span class="cls">${e.names[0]}${e.variants.length?"_*":""}</span></span>
         <span class="meta">${e.it.nom
-            ? `${e.it.cat||"—"} · <b>${e.it.nom}</b> on map`
+            ? `${e.it.cat||"—"} · <b>${e.it.nom}</b> on map${hoardTag(e.it)}`
             : `<span style="color:var(--danger)">does not spawn</span>`}<br>
           <span class="t">${e.it.tier.length?e.it.tier.join("/").replace(/Tier/g,"T"):"any tier"}</span>
           · ${e.it.usg.join(", ")||"anywhere"}</span>

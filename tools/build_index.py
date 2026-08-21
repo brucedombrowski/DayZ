@@ -20,6 +20,7 @@ import re
 import ssl
 import struct
 import sys
+import zlib
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections import defaultdict
@@ -158,6 +159,13 @@ def parse_types(data: bytes) -> dict:
             "nom": int((t.findtext("nominal") or 0)),
             "min": int((t.findtext("min") or 0)),
         }
+        # count_in_* decide whether a copy held by a player still counts toward
+        # `nominal`. When all three are 0, stashing one frees the economy to spawn
+        # a replacement -- so hoarding cannot make that item scarcer.
+        f = t.find("flags")
+        if f is not None:
+            entry["cnt"] = {k: int(f.get("count_in_" + k, 0))
+                            for k in ("cargo", "hoarder", "map", "player")}
         out[name] = entry
     return out
 
@@ -284,6 +292,60 @@ def parse_areaflags(data: bytes) -> tuple[int, memoryview, memoryview]:
     return gw, mv[24:24 + cells * 4], mv[24 + cells * 4:]
 
 
+def write_png(path: Path, w: int, h: int, rgba: bytearray) -> None:
+    """Minimal RGBA PNG encoder.
+
+    Hand-rolled to keep the build dependency-free and deterministic: no Pillow, and
+    zlib at a fixed level so the same input always produces the same bytes.
+    """
+    raw = bytearray()
+    for y in range(h):                       # filter byte 0 (None) per scanline
+        raw.append(0)
+        raw += rgba[y * w * 4:(y + 1) * w * 4]
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + tag + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + chunk(b"IEND", b""))
+
+
+# Tier1 green -> Tier4 red, matching Bohemia's own documentation.
+TIER_RGB = [(90, 170, 70), (215, 190, 60), (225, 140, 45), (210, 65, 55)]
+
+
+def render_tier_png(path: Path, area, down: int = 4) -> int:
+    """Downsample the 4096^2 value plane into an RGBA overlay.
+
+    Each output pixel takes the HIGHEST tier bit present in its block -- a Tier 4
+    pocket inside a Tier 3 region is the interesting part and must not be averaged
+    away. Rows are emitted north-first, since PNG row 0 is the top of the image
+    while grid row 0 is z=0 (south).
+    """
+    grid, _usage, value = area
+    n = grid // down
+    px = bytearray(n * n * 4)
+    for oy in range(n):
+        z0 = (n - 1 - oy) * down          # flip: image top = high z = north
+        for ox in range(n):
+            bits = 0
+            for r in range(z0, z0 + down):
+                base = r * grid + ox * down
+                for c in range(down):
+                    bits |= value[base + c]
+            i = (oy * n + ox) * 4
+            top = bits & 0x0F
+            if top:
+                r, g, b = TIER_RGB[top.bit_length() - 1]
+                px[i:i+4] = bytes((r, g, b, 150))
+    write_png(path, n, n, px)
+    return n
+
+
 RE_CLASS = re.compile(r"class\s+(\w+)\s+extends\s+RecipeBase")
 RE_ING = re.compile(r'InsertIngredient\s*\(\s*(\d+)\s*,\s*"([^"]+)"')
 RE_RES = re.compile(r'AddResult\s*\(\s*"([^"]+)"')
@@ -362,6 +424,8 @@ def cmd_build() -> int:
     write_json(OUT / "groups.json", groups)
     write_json(OUT / "instances.json", {"types": names, "rows": rows})
     write_json(OUT / "limits.json", limits)
+    tier_px = render_tier_png(OUT / "tiers.png", area)
+    print(f"  docs/data/tiers.png  {(OUT/'tiers.png').stat().st_size:,}b  ({tier_px}x{tier_px})")
     write_json(OUT / "recipes.json", recipes)
     write_json(OUT / "meta.json", {
         "map": "chernarusplus",
