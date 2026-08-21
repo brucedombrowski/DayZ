@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DayZ Loot Finder — Chernarus+</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🧭</text></svg>">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+  :root{
+    --bg:#12140f; --panel:#1b1e17; --panel2:#232719; --line:#343a28;
+    --text:#e6e8dd; --dim:#9aa088; --accent:#b8c94a; --accent2:#7f8f2e;
+    --warn:#e0a33e; --warnbg:#2e2413; --danger:#d2694a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden}
+  body{
+    background:var(--bg);color:var(--text);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  #app{display:flex;height:100%}
+
+  /* ---- sidebar ---- */
+  #side{
+    width:380px;min-width:380px;height:100%;display:flex;flex-direction:column;
+    background:var(--panel);border-right:1px solid var(--line);
+  }
+  header{padding:12px 14px;border-bottom:1px solid var(--line)}
+  header h1{margin:0;font-size:15px;letter-spacing:.02em}
+  header p{margin:2px 0 0;font-size:11.5px;color:var(--dim)}
+
+  .tabs{display:flex;border-bottom:1px solid var(--line)}
+  .tabs button{
+    flex:1;padding:9px;background:none;border:0;border-bottom:2px solid transparent;
+    color:var(--dim);font:inherit;font-size:13px;cursor:pointer;
+  }
+  .tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
+  .tabs button:hover{color:var(--text)}
+
+  .pane{flex:1;overflow-y:auto;padding:12px 14px;display:none}
+  .pane[data-active]{display:block}
+
+  label.fld{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--dim);margin:12px 0 5px}
+  label.fld:first-child{margin-top:0}
+  input[type=text],input[type=number]{
+    width:100%;padding:7px 9px;background:var(--panel2);color:var(--text);
+    border:1px solid var(--line);border-radius:5px;font:inherit;
+  }
+  input:focus{outline:2px solid var(--accent2);outline-offset:-1px}
+  .row{display:flex;gap:8px}
+  .row>*{flex:1;min-width:0}
+  button.act{
+    padding:8px 12px;background:var(--accent2);color:#0f1108;border:0;border-radius:5px;
+    font:inherit;font-weight:600;cursor:pointer;
+  }
+  button.act:hover{background:var(--accent)}
+  button.act[disabled]{opacity:.4;cursor:default}
+
+  /* ---- autocomplete ---- */
+  .ac{position:relative}
+  .ac ul{
+    position:absolute;z-index:1000;left:0;right:0;top:100%;margin:2px 0 0;padding:0;
+    list-style:none;max-height:260px;overflow-y:auto;background:var(--panel2);
+    border:1px solid var(--line);border-radius:5px;box-shadow:0 8px 24px #0009;
+  }
+  .ac li{padding:6px 9px;cursor:pointer;display:flex;justify-content:space-between;gap:8px}
+  .ac li[aria-selected=true],.ac li:hover{background:var(--accent2);color:#0f1108}
+  .ac li small{color:var(--dim);flex-shrink:0}
+  .ac li[aria-selected=true] small{color:#0f1108}
+
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
+  .chip{
+    display:flex;align-items:center;gap:6px;padding:3px 6px 3px 9px;
+    background:var(--panel2);border:1px solid var(--line);border-radius:20px;font-size:12.5px;
+  }
+  .chip button{background:none;border:0;color:var(--dim);cursor:pointer;font-size:15px;
+    line-height:1;padding:0 2px}
+  .chip button:hover{color:var(--danger)}
+
+  /* ---- results ---- */
+  .res{list-style:none;margin:10px 0 0;padding:0}
+  .res li{
+    padding:9px 10px;margin-bottom:6px;background:var(--panel2);
+    border:1px solid var(--line);border-left:3px solid var(--accent2);
+    border-radius:5px;cursor:pointer;
+  }
+  .res li:hover{border-left-color:var(--accent);background:#282d1c}
+  .res .r1{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+  .res .nm{font-weight:600}
+  .res .dist{font-size:12px;color:var(--accent);white-space:nowrap}
+  .res .r2{font-size:11.5px;color:var(--dim);margin-top:2px}
+
+  .note{
+    padding:9px 11px;border-radius:5px;font-size:12.5px;margin:10px 0;
+    background:var(--warnbg);border:1px solid #5a4520;color:#f0cd8a;
+  }
+  .note b{color:var(--warn)}
+  .muted{color:var(--dim);font-size:12.5px}
+
+  /* ---- craft tree ---- */
+  .tree{list-style:none;margin:8px 0 0;padding:0;font-size:13px}
+  .tree ul{list-style:none;margin:0;padding-left:16px;border-left:1px solid var(--line)}
+  .tree li{padding:2px 0}
+  .tree .it{font-weight:600}
+  .tree .via{color:var(--dim);font-size:11.5px}
+  .tree .leaf-loot{color:var(--accent)}
+  .tree .leaf-none{color:var(--danger)}
+  .tree .tool{color:#8fb4d0}
+  .tree .cyc{color:var(--dim);font-style:italic}
+  .tree button.find{
+    background:none;border:1px solid var(--line);color:var(--accent);border-radius:4px;
+    font:inherit;font-size:10.5px;padding:0 5px;margin-left:6px;cursor:pointer;
+  }
+  .tree button.find:hover{background:var(--accent2);color:#0f1108}
+
+  /* ---- map ---- */
+  #map{flex:1;height:100%;background:#0c0e0a}
+  .leaflet-container{background:#0c0e0a;font-family:inherit}
+  .leaflet-popup-content-wrapper,.leaflet-popup-tip{
+    background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+  .leaflet-popup-content{margin:9px 11px;font-size:13px}
+  .leaflet-popup-content a{color:var(--accent)}
+  .lbl{
+    font-size:10.5px;color:#7d8468;text-shadow:0 0 3px #000,0 0 3px #000;
+    white-space:nowrap;pointer-events:none;
+  }
+  #hud{
+    position:absolute;right:10px;bottom:10px;z-index:500;background:#12140fdd;
+    border:1px solid var(--line);border-radius:5px;padding:5px 9px;
+    font-size:11.5px;color:var(--dim);font-variant-numeric:tabular-nums;
+  }
+  #load{
+    position:absolute;inset:0;z-index:2000;display:flex;align-items:center;
+    justify-content:center;background:var(--bg);color:var(--dim);
+  }
+  @media (max-width:760px){
+    #app{flex-direction:column}
+    #side{width:100%;min-width:0;height:52%;border-right:0;border-bottom:1px solid var(--line)}
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="side">
+    <header>
+      <h1>DayZ Loot Finder <span style="color:var(--dim);font-weight:400">— Chernarus+</span></h1>
+      <p id="sub">loading…</p>
+    </header>
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tab-loot" aria-selected="true" aria-controls="pane-loot">Loot map</button>
+      <button role="tab" id="tab-craft" aria-selected="false" aria-controls="pane-craft">Crafting</button>
+    </div>
+
+    <div class="pane" id="pane-loot" data-active role="tabpanel">
+      <label class="fld" for="q">Items to find</label>
+      <div class="ac">
+        <input type="text" id="q" placeholder="e.g. SledgeHammer" autocomplete="off"
+               spellcheck="false" aria-autocomplete="list">
+        <ul id="acl" hidden role="listbox"></ul>
+      </div>
+      <div class="chips" id="chips"></div>
+
+      <label class="fld">My position (click the map, or type)</label>
+      <div class="row">
+        <input type="number" id="px" placeholder="x (east)" step="1">
+        <input type="number" id="pz" placeholder="z (north)" step="1">
+      </div>
+
+      <div id="tierNote"></div>
+      <div id="out"></div>
+    </div>
+
+    <div class="pane" id="pane-craft" role="tabpanel">
+      <label class="fld" for="cq">What do you want to make?</label>
+      <div class="ac">
+        <input type="text" id="cq" placeholder="e.g. QuickieBow" autocomplete="off"
+               spellcheck="false" aria-autocomplete="list">
+        <ul id="cacl" hidden role="listbox"></ul>
+      </div>
+      <div id="cout"><p class="muted" style="margin-top:12px">
+        Pick an item to see its recipe tree. Leaves marked
+        <span style="color:var(--accent)">LOOT</span> can be sent straight to the map.
+      </p></div>
+    </div>
+  </div>
+  <div id="map"></div>
+</div>
+<div id="hud">—</div>
+<div id="load">loading map data…</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+"use strict";
+const SIZE = 15360;
+const $ = s => document.querySelector(s);
+
+/* Approximate landmark coordinates, for orientation only. These are not from the
+   CLE data (which carries no place names) — treat iZurvive as authoritative. */
+const TOWNS = [
+  ["Chernogorsk",6700,2500],["Elektrozavodsk",10400,2200],["Berezino",12100,9000],
+  ["Zelenogorsk",2600,5200],["Novodmitrovsk",11900,14300],["Severograd",8000,12700],
+  ["Vybor",3900,8900],["Stary Sobor",6100,7700],["Novy Sobor",7000,7700],
+  ["Balota",4800,2400],["Kamenka",1900,2100],["Solnichniy",13500,6300],
+  ["Krasnostav",11200,12200],["Gorka",9600,8800],["Myshkino",2000,7500],
+  ["Tisy",1600,13800],["NW Airfield",4600,10300],["Green Mtn",3700,6000],
+  ["Kabanino",4800,8200],["Pustoshka",3200,7000],
+];
+
+let ITEMS, GROUPS, INST, RECIPES, META, MADE_BY;
+let map, pinMarker = null, hotLayer = null, pos = null;
+const picked = [];
+
+/* ---------- data ---------- */
+async function boot(){
+  const j = async n => (await fetch(`data/${n}.json`)).json();
+  [ITEMS, GROUPS, INST, RECIPES, META] =
+    await Promise.all(["items","groups","instances","recipes","meta"].map(j));
+
+  MADE_BY = new Map();
+  for (const r of RECIPES)
+    for (const o of r.out) (MADE_BY.get(o) || MADE_BY.set(o,[]).get(o)).push(r);
+
+  $("#sub").textContent =
+    `${META.counts.items.toLocaleString()} items · ` +
+    `${META.counts.instances.toLocaleString()} buildings · ` +
+    `${META.counts.recipes} recipes · CLE @ ${META.commits["central-economy"].slice(0,7)}`;
+
+  initMap();
+  $("#load").remove();
+}
+
+/* ---------- the core query ----------
+   An item spawns in a container when the building's usage list contains one of the
+   item's usages, the container's category list contains the item's category, and
+   the container offers one of the item's tags.
+
+   STRICT_TAGS: 30 `tools` containers declare no tag at all (incl. Tisy Garages,
+   41 points). Whether a `floor`-tagged item may spawn there is unconfirmed — see
+   issue "Do untagged containers accept tagged items?". We take the conservative
+   reading: no tag offered means no match, so we never route you to a site that
+   might spawn nothing. Flipping this adds ~2% of instances. */
+const STRICT_TAGS = true;
+
+function pointsFor(building, it){
+  const g = GROUPS[building];
+  if (!g) return 0;
+  if (it.usg.length && !it.usg.some(u => g.usg.includes(u))) return 0;
+  let n = 0;
+  for (const c of g.cont){
+    if (it.cat && !c.cat.includes(it.cat)) continue;
+    if (it.tag.length && (STRICT_TAGS || c.tag.length)
+        && !it.tag.some(t => c.tag.includes(t))) continue;
+    n += c.n;
+  }
+  return n;
+}
+
+/* Per-building-type point counts for the current selection, summed over items. */
+function weights(){
+  const w = new Float64Array(INST.types.length);
+  for (const name of picked){
+    const it = ITEMS[name];
+    for (let i = 0; i < INST.types.length; i++) w[i] += pointsFor(INST.types[i], it);
+  }
+  return w;
+}
+
+/* Grid-cluster matching buildings, then rank. Distance is a divisor rather than a
+   hard cut: a big cache 2km away often beats a single shed next door. */
+function search(){
+  const w = weights();
+  if (!w.some(v => v > 0)) return [];
+  const CELL = 300, cells = new Map();
+
+  for (const [ti, x, z] of INST.rows){
+    const pts = w[ti];
+    if (!pts) continue;
+    const k = ((x / CELL) | 0) + "," + ((z / CELL) | 0);
+    let c = cells.get(k);
+    if (!c) cells.set(k, c = {pts:0, n:0, sx:0, sz:0, types:new Map()});
+    c.pts += pts; c.n++; c.sx += x; c.sz += z;
+    c.types.set(ti, (c.types.get(ti) || 0) + 1);
+  }
+
+  const out = [];
+  for (const c of cells.values()){
+    const x = c.sx / c.n, z = c.sz / c.n;
+    const d = pos ? Math.hypot(x - pos.x, z - pos.z) : 0;
+    out.push({
+      x, z, pts:c.pts, n:c.n, d,
+      top: [...c.types].sort((a,b) => b[1]-a[1]).slice(0,2)
+               .map(([ti,k]) => `${k}× ${INST.types[ti].replace(/^Land_/,"")}`).join(", "),
+      // travel cost ~ 1 + km, so nearby ties break toward you
+      score: pos ? c.pts / (1 + d/1000) : c.pts,
+    });
+  }
+  return out.sort((a,b) => b.score - a.score).slice(0, 25);
+}
+
+/* ---------- map ---------- */
+class Dots extends L.Layer {
+  onAdd(m){
+    this._m = m;
+    this._c = L.DomUtil.create("canvas","leaflet-zoom-animated");
+    this._c.style.pointerEvents = "none";
+    m.getPanes().overlayPane.appendChild(this._c);
+    m.on("moveend zoomend resize", this._draw, this);
+    this._draw();
+    return this;
+  }
+  onRemove(m){ this._c.remove(); m.off("moveend zoomend resize", this._draw, this); }
+  setData(rows, hot){ this._rows = rows; this._hot = hot; this._draw(); }
+  _draw(){
+    if (!this._m) return;
+    const m = this._m, sz = m.getSize(), tl = m.containerPointToLayerPoint([0,0]);
+    L.DomUtil.setPosition(this._c, tl);
+    const dpr = window.devicePixelRatio || 1;
+    this._c.width = sz.x*dpr; this._c.height = sz.y*dpr;
+    this._c.style.width = sz.x+"px"; this._c.style.height = sz.y+"px";
+    const g = this._c.getContext("2d");
+    g.scale(dpr,dpr);
+    const r = Math.max(0.6, Math.min(3, 0.9 * Math.pow(2, m.getZoom())));
+    for (const [ti,x,z] of INST.rows){
+      const hot = this._hot && this._hot[ti] > 0;
+      const p = m.latLngToContainerPoint([z,x]);
+      if (p.x < -4 || p.y < -4 || p.x > sz.x+4 || p.y > sz.y+4) continue;
+      g.fillStyle = hot ? "#b8c94a" : "#3a4230";
+      g.beginPath(); g.arc(p.x, p.y, hot ? r*1.5 : r, 0, 6.284); g.fill();
+    }
+  }
+}
+let dots;
+
+function initMap(){
+  map = L.map("map",{crs:L.CRS.Simple, minZoom:-6, maxZoom:2, zoomSnap:.5,
+                     attributionControl:false, preferCanvas:true});
+  const b = [[0,0],[SIZE,SIZE]];
+  map.fitBounds(b); map.setMaxBounds([[-2000,-2000],[SIZE+2000,SIZE+2000]]);
+
+  dots = new Dots().addTo(map);
+
+  for (const [nm,x,z] of TOWNS)
+    L.marker([z,x],{opacity:0, icon:L.divIcon({className:"", html:`<div class="lbl">${nm}</div>`,
+      iconSize:[0,0]})}).addTo(map);
+
+  map.on("mousemove", e => {
+    $("#hud").textContent = `x ${Math.round(e.latlng.lng)}  z ${Math.round(e.latlng.lat)}`;
+  });
+  map.on("click", e => setPos(Math.round(e.latlng.lng), Math.round(e.latlng.lat)));
+}
+
+function setPos(x, z){
+  pos = {x, z};
+  $("#px").value = x; $("#pz").value = z;
+  if (pinMarker) pinMarker.remove();
+  pinMarker = L.circleMarker([z,x],{radius:7,color:"#fff",weight:2,
+    fillColor:"#d2694a",fillOpacity:1}).addTo(map).bindPopup(`You: ${x}, ${z}`);
+  render();
+}
+
+function bearing(from, to){
+  const a = (Math.atan2(to.x-from.x, to.z-from.z) * 180/Math.PI + 360) % 360;
+  return ["N","NE","E","SE","S","SW","W","NW"][Math.round(a/45) % 8];
+}
+
+/* ---------- render ---------- */
+function render(){
+  renderChips();
+  const out = $("#out"), note = $("#tierNote");
+
+  if (!picked.length){
+    out.innerHTML = `<p class="muted" style="margin-top:14px">
+      Add an item to see where it spawns. Click the map to set your position and
+      results will rank by travel distance.</p>`;
+    note.innerHTML = ""; dots.setData(INST.rows, null); return;
+  }
+
+  const w = weights();
+  dots.setData(INST.rows, w);
+
+  const tiers = [...new Set(picked.flatMap(n => ITEMS[n].tier))].sort();
+  note.innerHTML = tiers.length ? `<div class="note">
+      <b>Tier not yet enforced.</b> ${picked.length>1?"These items":"This item"} only
+      spawns in <b>${tiers.join(", ")}</b> areas, but tier zones
+      (<code>areaflags.map</code>) aren't decoded yet — so a hotspot below can be
+      structurally valid and still spawn nothing. Verify before a long trip.
+    </div>` : "";
+
+  const res = search();
+  if (!res.length){
+    out.innerHTML = `<p class="muted" style="margin-top:12px">No building spawns.
+      This item likely comes from a dynamic event or a container, not a building.</p>`;
+    return;
+  }
+  out.innerHTML = `<label class="fld">${res.length} hotspots${pos?", nearest-best first":""}</label>
+    <ul class="res">` + res.map((r,i) => `
+      <li data-i="${i}">
+        <div class="r1"><span class="nm">${Math.round(r.x)}, ${Math.round(r.z)}</span>
+          <span class="dist">${pos ? (r.d/1000).toFixed(1)+" km "+bearing(pos,r) : r.pts+" pts"}</span></div>
+        <div class="r2">${r.pts} loot points · ${r.n} buildings · ${r.top}</div>
+      </li>`).join("") + `</ul>`;
+
+  out.querySelectorAll("li").forEach(li => li.onclick = () => {
+    const r = res[+li.dataset.i];
+    map.setView([r.z,r.x], 0);
+    L.popup().setLatLng([r.z,r.x]).setContent(
+      `<b>${r.pts} loot points</b> in ${r.n} buildings<br>${r.top}<br>
+       <small>x ${Math.round(r.x)}, z ${Math.round(r.z)}</small><br>
+       <a href="https://www.izurvive.com/chernarus/#location=${Math.round(r.x)};${Math.round(r.z)};6"
+          target="_blank" rel="noopener noreferrer">Open in iZurvive ↗</a>`).openOn(map);
+  });
+}
+
+function renderChips(){
+  $("#chips").innerHTML = picked.map(n => {
+    const it = ITEMS[n];
+    return `<span class="chip">${n}<small style="color:var(--dim)">${it.tier.join("/")||"—"}</small>
+      <button data-n="${n}" title="remove">×</button></span>`;
+  }).join("");
+  $("#chips").querySelectorAll("button").forEach(b => b.onclick = () => {
+    picked.splice(picked.indexOf(b.dataset.n),1); render();
+  });
+}
+
+/* ---------- autocomplete ---------- */
+function autocomplete(inputSel, listSel, pool, onPick){
+  const inp = $(inputSel), list = $(listSel);
+  let hits = [], cur = -1;
+
+  const close = () => { list.hidden = true; cur = -1; };
+  const paint = () => {
+    list.innerHTML = hits.map((n,i) =>
+      `<li role="option" data-i="${i}" aria-selected="${i===cur}">${n}
+        <small>${pool.label(n)}</small></li>`).join("");
+    list.hidden = !hits.length;
+    list.querySelectorAll("li").forEach(li =>
+      li.onmousedown = e => { e.preventDefault(); choose(+li.dataset.i); });
+  };
+  const choose = i => { if (hits[i]){ onPick(hits[i]); inp.value = ""; close(); } };
+
+  inp.oninput = () => {
+    const q = inp.value.trim().toLowerCase();
+    if (!q){ close(); return; }
+    const all = pool.names();
+    // prefix matches first — typing "sled" should surface SledgeHammer, not bury it
+    hits = all.filter(n => n.toLowerCase().startsWith(q))
+      .concat(all.filter(n => !n.toLowerCase().startsWith(q) && n.toLowerCase().includes(q)))
+      .slice(0,50);
+    cur = hits.length ? 0 : -1; paint();
+  };
+  inp.onkeydown = e => {
+    if (list.hidden) return;
+    if (e.key === "ArrowDown"){ cur = Math.min(cur+1, hits.length-1); paint(); e.preventDefault(); }
+    else if (e.key === "ArrowUp"){ cur = Math.max(cur-1, 0); paint(); e.preventDefault(); }
+    else if (e.key === "Enter"){ choose(cur); e.preventDefault(); }
+    else if (e.key === "Escape") close();
+  };
+  inp.onblur = () => setTimeout(close, 120);
+}
+
+/* ---------- crafting tree ---------- */
+function craftTree(item, seen = []){
+  if (seen.includes(item))
+    return `<li><span class="cyc">${item} — already above (cycle)</span></li>`;
+
+  const recipes = (MADE_BY.get(item) || []).filter(r => r.kind === "craft");
+  if (!recipes.length){
+    const known = !!ITEMS[item];
+    const salvage = (MADE_BY.get(item) || []).length;
+    return `<li><span class="it">${item}</span> ` + (known
+      ? `<span class="leaf-loot">← LOOT</span>
+         <button class="find" data-find="${item}">find on map</button>`
+      : `<span class="leaf-none">← no recipe found in RecipeBase</span>`)
+      + (salvage ? ` <span class="via">· also salvageable</span>` : "") + `</li>`;
+  }
+
+  const r = recipes[0];
+  const mats = r.ing.filter(g => !g.tool), tools = r.ing.filter(g => g.tool);
+  return `<li><span class="it">${item}</span> <span class="via">⟵ ${r.id}</span><ul>`
+    + mats.map(g => g.any.length > 1
+        ? `<li><span class="via">any of:</span> ${g.any.slice(0,6).join(", ")}
+             ${g.any.length>6?` <span class="via">+${g.any.length-6}</span>`:""}
+           <ul>${craftTree(g.any[0], [...seen, item])}</ul></li>`
+        : craftTree(g.any[0], [...seen, item])).join("")
+    + tools.map(g => `<li><span class="tool">tool: ${
+        g.any.length>1 ? `any of ${g.any.length} (${g.any.slice(0,3).join(", ")}…)` : g.any[0]
+      }</span> <span class="via">not consumed</span></li>`).join("")
+    + `</ul></li>`;
+}
+
+function showCraft(item){
+  $("#cout").innerHTML = `<label class="fld">${item}</label>
+    <ul class="tree">${craftTree(item)}</ul>
+    <p class="muted" style="margin-top:12px">Showing craft recipes only; salvage
+    (de-craft) paths are noted but not expanded. Base-building recipes live outside
+    <code>RecipeBase</code> and aren't covered yet.</p>`;
+  $("#cout").querySelectorAll("button.find").forEach(b => b.onclick = () => {
+    const n = b.dataset.find;
+    if (!picked.includes(n)) picked.push(n);
+    tab("loot"); render();
+  });
+}
+
+/* ---------- tabs ---------- */
+function tab(which){
+  for (const t of ["loot","craft"]){
+    $("#tab-"+t).setAttribute("aria-selected", String(t === which));
+    $("#pane-"+t).toggleAttribute("data-active", t === which);
+  }
+}
+$("#tab-loot").onclick = () => tab("loot");
+$("#tab-craft").onclick = () => tab("craft");
+
+for (const id of ["#px","#pz"]) $(id).onchange = () => {
+  const x = +$("#px").value, z = +$("#pz").value;
+  if (Number.isFinite(x) && Number.isFinite(z) && x && z) setPos(x,z);
+};
+
+boot().then(() => {
+  autocomplete("#q","#acl",
+    {names:()=>Object.keys(ITEMS), label:n=>ITEMS[n].cat||""},
+    n => { if (!picked.includes(n)) picked.push(n); render(); });
+  autocomplete("#cq","#cacl",
+    {names:()=>[...new Set([...MADE_BY.keys(), ...Object.keys(ITEMS)])],
+     label:n=>MADE_BY.has(n)?"craftable":""},
+    showCraft);
+  render();
+}).catch(e => { $("#load").textContent = "failed to load: " + e.message; });
+</script>
+</body>
+</html>
