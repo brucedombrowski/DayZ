@@ -311,8 +311,16 @@ routing.
   Cherno→Elektro 3.7 km, Kamenka→Cherno 4.8 km, Zelenogorsk→NWAF 5.5 km.
 - **Energy and water** come from `playerconstants.c` — Bohemia's own numbers, not community
   estimates. Jogging costs 0.3 energy and 0.3 water per second out of 5000.
+- **Search time** scales with the building, not per building: a fixed cost to approach,
+  enter and leave, plus a per-loot-spot cost for walking to and checking each one. A 3-point
+  shed is a glance; a 20-point apartment block is minutes of stairs. Also a slider — not
+  published either.
 - **Candidates** are shortlisted by both raw yield *and* yield-per-metre from where you
   stand. Yield alone starves the solver of nearby options and leaves short budgets unused.
+
+Three of the planner's inputs — travel pace, search speed, and free slots — are **estimates
+we cannot look up**. They are sliders, labelled as such, with calibration hints. Everything
+downstream of them is computed from Bohemia's published config.
 
 ### v1 — the sledgehammer question, answered correctly
 

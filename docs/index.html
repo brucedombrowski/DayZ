@@ -273,6 +273,10 @@
       <input type="range" id="tPace" min="2.5" max="15" step="0.1" value="5.2" style="width:100%">
       <p class="muted" id="paceNote" style="margin-top:4px"></p>
 
+      <label class="fld" for="tSpot">Search speed — <b id="tSpotV">5</b> s per loot spot</label>
+      <input type="range" id="tSpot" min="2" max="20" step="1" value="5" style="width:100%">
+      <p class="muted" id="spotNote" style="margin-top:4px"></p>
+
       <label class="fld" for="tSlots">Free slots — <b id="tSlotsV">40</b></label>
       <input type="range" id="tSlots" min="5" max="120" step="5" value="40" style="width:100%">
 
@@ -679,7 +683,17 @@ const PACE = {
   sprint: {label:"Sprint", minPerKm:3.6,  e:"eSprint", w:"wSprint",
            note:"stamina-limited — not sustainable for a long run"},
 };
-const SEARCH_SEC = 12;               // per building: enter, check slots, leave
+/* Search time scales with the building, not per building.
+
+   A flat per-building figure is wrong in both directions: a 3-point shed is a
+   glance, a 20-point apartment block is several minutes of stairs and rooms. So
+   dwell = a fixed cost to approach, enter and leave, plus a per-loot-spot cost
+   for actually walking to and checking each one.
+
+   Neither number is published either. Defaults are deliberately unhurried;
+   SEC_PER_SPOT is a slider. */
+const SEARCH_ENTER = 20;             // approach, door, clear, leave
+let SEC_PER_SPOT = 5;                // walk to and check one loot spot
 let MIN_PER_KM = PACE.jog.minPerKm;
 let PACE_KEY = "jog", basePos = null, planLine = null, planMarks = null;
 let CLICK_MODE = "pos", baseMarker = null;
@@ -724,6 +738,12 @@ function wirePlanControls(){
       x.setAttribute("aria-pressed", String(x.dataset.p === PACE_KEY)));
     renderPlan();
   });
+
+  $("#tSpot").oninput = () => {
+    SEC_PER_SPOT = +$("#tSpot").value;
+    $("#tSpotV").textContent = SEC_PER_SPOT;
+    renderPlan();
+  };
 
   $("#tPace").oninput = () => {
     MIN_PER_KM = +$("#tPace").value;
@@ -798,11 +818,14 @@ function candidates(pl, start){
     if (y <= 0) continue;
     const k = ((row[1]/CELL)|0) + "," + ((row[2]/CELL)|0);
     let c = cells.get(k);
-    if (!c) cells.set(k, c = {y:0, n:0, sx:0, sz:0});
+    if (!c) cells.set(k, c = {y:0, n:0, sx:0, sz:0, pts:0});
     c.y += y; c.n++; c.sx += row[1]; c.sz += row[2];
+    // every loot spot in the building costs time to check, not just matching ones
+    c.pts += (GROUPS[INST.types[row[0]]] || {cont:[]}).cont.reduce((a,x) => a + x.n, 0);
   }
   const all = [...cells.values()]
-    .map(c => ({x:c.sx/c.n, z:c.sz/c.n, yield:c.y, n:c.n, dwell:c.n * SEARCH_SEC}))
+    .map(c => ({x:c.sx/c.n, z:c.sz/c.n, yield:c.y, n:c.n, pts:c.pts,
+                dwell:c.n * SEARCH_ENTER + c.pts * SEC_PER_SPOT}))
     .filter(c => c.yield > 0.02);
 
   const byYield = all.slice().sort((a,b) => b.yield - a.yield).slice(0, 50);
@@ -888,6 +911,7 @@ function renderPlan(){
 
   const pl = plans();
   const budget = +$("#tBudget").value * 60;
+  const spotNote = $("#spotNote");
   const slots = +$("#tSlots").value;
   const pace = PACE[PACE_KEY];
   const start = pos, end = basePos || pos;
@@ -916,7 +940,8 @@ function renderPlan(){
       <span class="d"><b>${Math.round(s.x)}, ${Math.round(s.z)}</b>
         <div class="t">${(Math.hypot(s.x,s.z) >= 0 ? "" : "")}${
           Math.round(Math.hypot(prev.x-s.x, prev.z-s.z))>=0
-          ? `${(leg/60).toFixed(1)} min leg · ${s.n} buildings · search ${(s.dwell/60).toFixed(1)} min` : ""}
+          ? `${(leg/60).toFixed(1)} min leg · ${s.n} buildings, ${s.pts} loot spots ·
+             search ${(s.dwell/60).toFixed(1)} min` : ""}
         </div>
         <div class="t">arrive ${Math.round(arrive/60)} min · expect
           <b style="color:var(--accent)">${s.yield.toFixed(1)}</b> item${s.yield<1.5?"":"s"}</div>
@@ -945,6 +970,11 @@ function renderPlan(){
       <div class="t">${(legSec(prev, end, MIN_PER_KM)/60).toFixed(1)} min home</div></span></div>
     <p class="muted" style="margin-top:10px">Expected yield assumes every slot is
     unlooted. On a populated server, treat it as an upper bound.</p>`;
+
+  const avgB = stops.reduce((a,s) => a + s.dwell, 0) / Math.max(1, stops.reduce((a,s) => a + s.n, 0));
+  spotNote.innerHTML = `${SEARCH_ENTER}s to approach and clear each building, plus
+    ${SEC_PER_SPOT}s per loot spot — <b>${Math.round(avgB)}s per building</b> on this route.
+    Also an estimate; raise it if you play carefully or the buildings are big.`;
 
   drawRoute(start, stops, end);
   out.querySelectorAll(".stop[data-i]").forEach(el => el.onclick = () => {
@@ -1297,6 +1327,10 @@ function applyHash(){
   if (bs.length === 2 && bs.every(Number.isFinite)) setBase(bs[0], bs[1]);
   if (q.get("min")){ $("#tBudget").value = q.get("min"); $("#tBudgetV").textContent = q.get("min"); }
   if (PACE[q.get("pace")]){ PACE_KEY = q.get("pace"); MIN_PER_KM = PACE[PACE_KEY].minPerKm; }
+  if (q.get("spot")){
+    SEC_PER_SPOT = +q.get("spot");
+    $("#tSpot").value = SEC_PER_SPOT; $("#tSpotV").textContent = SEC_PER_SPOT;
+  }
   if (q.get("mpk")){
     MIN_PER_KM = +q.get("mpk");
     $("#tPace").value = MIN_PER_KM; $("#tPaceV").textContent = MIN_PER_KM.toFixed(1);
