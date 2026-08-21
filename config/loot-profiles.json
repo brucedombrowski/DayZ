@@ -1,0 +1,145 @@
+{
+  "_about": [
+    "Declarative preference config for the run planner. Hand-authored, NOT derived.",
+    "",
+    "This is the pattern the repo is meant to demonstrate: the objective function of a",
+    "planner is a product decision, so it lives in reviewable data rather than buried in",
+    "code. Changing what a run optimises for is a diff to this file.",
+    "",
+    "Every selector is resolved against the real item index at build time. A selector",
+    "that matches nothing is a BUILD FAILURE, not a silent empty set -- that is what stops",
+    "an upstream rename from quietly turning a profile into a no-op.",
+    "",
+    "Selector grammar, all optional, OR'd together then minus `exclude`:",
+    "  names       exact class names",
+    "  patterns    case-insensitive regex over the class name",
+    "  categories  whole CLE categories (tools, food, clothes, ...)",
+    "  usages      items carrying that CLE usage tag"
+  ],
+  "profiles": [
+    {
+      "id": "basebuild",
+      "label": "Base building",
+      "note": "Fences, gates, watchtowers, and the tools that raise them.",
+      "include": {
+        "names": [
+          "BarbedWire",
+          "MetalWire",
+          "NailBox",
+          "PileOfWoodenPlanks",
+          "Netting",
+          "BurlapSack",
+          "Rope",
+          "CombinationLock",
+          "CombinationLock4",
+          "SledgeHammer",
+          "Hatchet",
+          "Shovel",
+          "FieldShovel",
+          "Pickaxe",
+          "Hacksaw",
+          "HandSaw",
+          "Crowbar",
+          "Hammer",
+          "Pliers",
+          "Screwdriver",
+          "Wrench",
+          "PipeWrench",
+          "LugWrench",
+          "DuctTape"
+        ]
+      }
+    },
+    {
+      "id": "foodwater",
+      "label": "Food & water",
+      "note": "Keeping the run itself paid for.",
+      "include": {
+        "categories": [
+          "food"
+        ]
+      }
+    },
+    {
+      "id": "guncare",
+      "label": "Gun & gear repair",
+      "note": "Keeping weapons and kit serviceable, plus ammo.",
+      "include": {
+        "names": [
+          "WeaponCleaningKit",
+          "Whetstone",
+          "Screwdriver",
+          "DuctTape",
+          "SewingKit",
+          "LeatherSewingKit",
+          "EpoxyPutty",
+          "ElectronicRepairKit",
+          "TireRepairKit"
+        ],
+        "patterns": [
+          "^Ammo_"
+        ]
+      }
+    },
+    {
+      "id": "hunting",
+      "label": "Hunting kit",
+      "note": "What deer stands and hunting cabins actually hold.",
+      "include": {
+        "usages": [
+          "Hunting"
+        ]
+      }
+    },
+    {
+      "id": "medical",
+      "label": "Medical",
+      "note": "Bandages, antibiotics, blood, disinfectant.",
+      "include": {
+        "names": [
+          "BandageDressing",
+          "TetracyclineAntibiotics",
+          "CharcoalTablets",
+          "PainkillerTablets",
+          "VitaminBottle",
+          "Morphine",
+          "Epinephrine",
+          "SalineBag",
+          "BloodBagEmpty",
+          "StartKitIV",
+          "IodineTincture",
+          "DisinfectantAlcohol",
+          "DisinfectantSpray",
+          "PurificationTablets",
+          "Thermometer",
+          "SurgicalMask",
+          "FirstAidKit",
+          "BloodTestKit"
+        ],
+        "patterns": [
+          "^SurgicalGloves_"
+        ]
+      }
+    },
+    {
+      "id": "ragsource",
+      "label": "Clothes to shred",
+      "note": "Clothing is a rag supply: rags make bandages and rope. Value the CLE cannot see, because it is downstream of a crafting recipe rather than a property of the item.",
+      "include": {
+        "categories": [
+          "clothes"
+        ]
+      }
+    }
+  ],
+  "avoidableUsages": [
+    "Military",
+    "Police",
+    "Prison",
+    "ContaminatedArea"
+  ],
+  "_notes": {
+    "avoidableUsages": "Offered as skip toggles. A supply run into a low-tier town has no reason to route through a military base -- the risk is real and the tool cannot price it, so the player decides.",
+    "ragsource": "The clearest example of why categories are not preferences: `clothes` is a CLE category, but its VALUE here comes from a crafting recipe two steps away."
+  }
+}

@@ -1,11 +1,9 @@
-# DayZ Loot Finder
+# DayZ Loot Run Planner
 
 ### ▶ Live: **https://brucedombrowski.github.io/DayZ/**
 
-A browser map that answers one question: **"I need item X and I'm at position Y — where do I go?"**
-
-You pick one or more items, drop your current position on the map, and it shows the real
-spawn points for those items, ranked by how worthwhile the trip is.
+A browser tool that plans a loot run: **"I'm here, my base is there, I need X, I have 45
+minutes — where do I go, in what order, and what do I fill up with on the way home?"**
 
 This is not a hand-curated loot table. It is derived from the game's actual **Central Loot
 Economy (CLE)** configuration, so the answers reflect what the server is really doing.
@@ -14,7 +12,7 @@ Economy (CLE)** configuration, so the answers reflect what the server is really 
 
 | | |
 |---|---|
-| **Run planner** | "I'm here, my base is there, I have 45 minutes — plan the route." The point of the whole thing. |
+| **Run planner** | The point of the whole thing — see [Designing a good run](#designing-a-good-run). |
 | **Loot map** | "I need item X, I'm at Y — where do I go?" |
 | **Catalog** | Browse 1,389 items by category, tier and usage, because nobody remembers `WaterproofBag_Orange`. |
 | **Building lookup** | Click any building — everything that can spawn in it, gated by the tier it stands in. |
@@ -290,16 +288,27 @@ One recurring source of bugs, so it is written down once here:
 
 ## Scope
 
-### Run planner
+### Designing a good run
 
-The real question is not "where does X spawn" but "given where I am, where my base is, and
-how long I have, what route should I run". That is an
-[orienteering problem](https://en.wikipedia.org/wiki/Orienteering_problem): visit a subset
-of scored sites, start and end fixed, maximise value under a time budget.
+A run has **two objectives that behave differently**, and conflating them produces bad routes.
 
-Solved greedily by marginal expected-items-per-minute, then improved with 2-opt. Exact
-optimum is not worth chasing — spawn odds and your real pace are far noisier than the
-routing.
+**The target saturates.** You go out for one sledgehammer; a second is worth nothing. With
+small independent per-slot odds, `P(none) ≈ exp(−λ)`, so what matters is
+**`P(at least one) = 1 − exp(−λ)`** — 63% at λ=1, 86% at 2, 95% at 3. Maximising *expected
+count* instead would cheerfully send you to five sledgehammer towns for the same practical
+result. The planner stops chasing a target once the odds flatten.
+
+**The fill is linear until the pack is full**, then worthless. So once the needs are
+satisfied, remaining budget goes to coming home loaded.
+
+```
+value(route) = Π P(found each need)  +  0.45 × min(fill, slots)/slots
+```
+
+Selection is on **value per second**, not raw value. That is what surfaces deer stands: 2–3
+slots drawn from a narrow `Hunting` pool means ~5% odds per slot against ~1% in a generic
+wreck, and a ~35 s stop. They earn a place between towns despite holding far less loot in
+total — which matches how players actually navigate.
 
 - **Expected yield** per stop = `eff` slots × the item's share of the nominal competing for
   that slot. An estimate, and an upper bound: it assumes nothing has been looted.
@@ -321,6 +330,22 @@ routing.
 Three of the planner's inputs — travel pace, search speed, and free slots — are **estimates
 we cannot look up**. They are sliders, labelled as such, with calibration hints. Everything
 downstream of them is computed from Bohemia's published config.
+
+### Preferences are config, not code
+
+What a run optimises for is a *product decision*, so it lives in
+[`config/loot-profiles.json`](config/loot-profiles.json) as reviewable data. Changing what
+"come back full" means is a diff to that file.
+
+Every selector is resolved against the live item index at build time, and **a selector that
+matches nothing fails the build**. That is not ceremony — the first run of the validator
+rejected `Toolbox`, an item I had assumed existed and which DayZ does not have. Without the
+check it would have shipped as a silently empty preference.
+
+It also captures value the source system cannot express. `clothes` is a CLE category, but
+its worth on a run is that you shred it into rags for bandages and rope — a fact that lives
+two steps away in a crafting recipe. No amount of reading `types.xml` reveals that; it has
+to be declared.
 
 ### v1 — the sledgehammer question, answered correctly
 

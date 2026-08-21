@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DayZ Loot Finder — Chernarus+</title>
+<title>DayZ Loot Run Planner — Chernarus+</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🧭</text></svg>">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
@@ -174,8 +174,10 @@
   .tierimg{image-rendering:auto;mix-blend-mode:screen}
   .lbl{
     font-size:11px;color:#aab392;font-weight:600;text-shadow:0 0 3px #000,0 0 3px #000;
-    white-space:nowrap;pointer-events:none;
+    white-space:nowrap;pointer-events:none;line-height:1.15;
   }
+  .lbl .cyr{font-weight:400;color:#8d9678;font-size:10px}
+  .lbl.unsure{opacity:.55;font-style:italic}
   #layers{position:absolute;left:10px;bottom:10px;z-index:500}
   #layers button{
     background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:4px;
@@ -214,7 +216,7 @@
 <div id="app">
   <div id="side">
     <header>
-      <h1>DayZ Loot Finder <span style="color:var(--dim);font-weight:400">— Chernarus+</span></h1>
+      <h1>DayZ Loot Run Planner <span style="color:var(--dim);font-weight:400">— Chernarus+</span></h1>
       <p id="sub">loading…</p>
     </header>
     <div class="tabs" role="tablist">
@@ -265,6 +267,14 @@
 
       <label class="fld" for="tBudget">Time budget — <b id="tBudgetV">45</b> min</label>
       <input type="range" id="tBudget" min="10" max="180" step="5" value="45" style="width:100%">
+
+      <label class="fld">Also collect <span style="text-transform:none;letter-spacing:0">
+        — what fills the pack on the way home</span></label>
+      <div class="filt" id="planFill"></div>
+      <p class="muted" id="fillNote" style="margin-top:4px"></p>
+
+      <label class="fld">Skip buildings used for</label>
+      <div class="filt" id="planAvoid"></div>
 
       <label class="fld">Pace</label>
       <div class="filt" id="planPace"></div>
@@ -333,20 +343,12 @@
 const SIZE = 15360;
 const $ = s => document.querySelector(s);
 
-/* Approximate landmark coordinates, for orientation only. These are not from the
-   CLE data (which carries no place names) — treat iZurvive as authoritative. */
-const TOWNS = [
-  ["Chernogorsk",6700,2500],["Elektrozavodsk",10400,2200],["Berezino",12100,9000],
-  ["Zelenogorsk",2600,5200],["Novodmitrovsk",11900,14300],["Severograd",8000,12700],
-  ["Vybor",3900,8900],["Stary Sobor",6100,7700],["Novy Sobor",7000,7700],
-  ["Balota",4800,2400],["Kamenka",1900,2100],["Solnichniy",13500,6300],
-  ["Krasnostav",11200,12200],["Gorka",9600,8800],["Myshkino",2000,7500],
-  ["Tisy",1600,13800],["NW Airfield",4600,10300],["Green Mtn",3700,6000],
-  ["Kabanino",4800,8200],["Pustoshka",3200,7000],
-];
+/* Place labels come from config/places.json, whose coordinates are validated
+   against building density at build time. Names and Cyrillic are human knowledge
+   -- the CLE has no place names and sign text lives in unpublished terrain data. */
 
 let ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS,
-    PLAYER, MADE_BY;
+    PLAYER, PROFILES, PLACES, MADE_BY;
 /* Catalog entries. Colour variants of one item (WaterproofBag_Green/Orange/…)
    share the same physical loot points, so they collapse into a single entry and
    are counted ONCE — summing them would multiply the same points by 3. Families
@@ -361,9 +363,10 @@ const picked = [];
 /* ---------- data ---------- */
 async function boot(){
   const j = async n => (await fetch(`data/${n}.json`)).json();
-  [ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS, PLAYER] =
+  [ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS, PLAYER,
+   PROFILES, PLACES] =
     await Promise.all(["items","groups","instances","recipes","meta","limits","landmarks",
-      "toxic","events","spawns","player"].map(j));
+      "toxic","events","spawns","player","profiles","places"].map(j));
   LIMITS.value.forEach((n,i) => TIERBIT[n] = 1 << i);
   buildEntries();
 
@@ -697,6 +700,19 @@ let SEC_PER_SPOT = 5;                // walk to and check one loot spot
 let MIN_PER_KM = PACE.jog.minPerKm;
 let PACE_KEY = "jog", basePos = null, planLine = null, planMarks = null;
 let CLICK_MODE = "pos", baseMarker = null;
+const fillOn = new Set(), avoidOn = new Set();
+let FILL_ITEMS = new Set();
+
+/* Union of every enabled profile. Recomputed on toggle rather than per building,
+   because the planner asks "is this item wanted" tens of thousands of times. */
+function refreshFill(){
+  FILL_ITEMS = new Set();
+  for (const p of PROFILES.profiles)
+    if (fillOn.has(p.id)) p.items.forEach(n => FILL_ITEMS.add(n));
+  $("#fillNote").textContent = fillOn.size
+    ? `${FILL_ITEMS.size} item types count toward filling the pack.`
+    : "Nothing selected — the route optimises only for what you need.";
+}
 
 function setBase(x, z){
   basePos = {x, z};
@@ -715,6 +731,29 @@ function syncModeButtons(){
 }
 
 function wirePlanControls(){
+  $("#planFill").innerHTML = PROFILES.profiles.map(p =>
+    `<button data-f="${p.id}" title="${p.note}" aria-pressed="false">${p.label}</button>`).join("");
+  $("#planFill").querySelectorAll("button").forEach(b => b.onclick = () => {
+    const id = b.dataset.f;
+    fillOn.has(id) ? fillOn.delete(id) : fillOn.add(id);
+    b.setAttribute("aria-pressed", String(fillOn.has(id)));
+    b.style.background = fillOn.has(id) ? "var(--accent2)" : "";
+    b.style.color = fillOn.has(id) ? "#0f1108" : "";
+    refreshFill(); renderPlan();
+  });
+
+  $("#planAvoid").innerHTML = PROFILES.avoidableUsages.map(u =>
+    `<button data-a="${u}" aria-pressed="false">${u}</button>`).join("");
+  $("#planAvoid").querySelectorAll("button").forEach(b => b.onclick = () => {
+    const u = b.dataset.a;
+    avoidOn.has(u) ? avoidOn.delete(u) : avoidOn.add(u);
+    b.setAttribute("aria-pressed", String(avoidOn.has(u)));
+    b.style.background = avoidOn.has(u) ? "var(--danger)" : "";
+    b.style.color = avoidOn.has(u) ? "#0f1108" : "";
+    renderPlan();
+  });
+  refreshFill();
+
   $("#planMode").innerHTML =
     `<button data-m="pos" aria-pressed="true">Set position</button>
      <button data-m="base">Set base</button>
@@ -777,32 +816,58 @@ function slotPool(type, ci, tierFlags){
   return total;
 }
 
-/* Expected number of wanted items in one building.
+/* Expected count of a set of items in one building.
 
    eff (not raw points) is how many slots actually hold loot; share is the item's
-   nominal over everything competing for that slot. Both are estimates, and the
-   product is what you can reasonably expect to walk away with. */
-function expectedYield(row, pl){
+   nominal over everything competing for that slot. */
+function expectedFor(row, match){
   const [ti, , , tierFlags] = row;
   const type = INST.types[ti], g = GROUPS[type];
   if (!g) return 0;
   let exp = 0;
   g.cont.forEach((c, ci) => {
     let want = 0;
-    for (const p of pl){
-      const it = p.it;
+    for (const [name, it] of Object.entries(ITEMS)){
       if (!it.nom || !it.cat) continue;
       if (!c.cat.includes(it.cat)) continue;
       if (it.tag.length && !it.tag.some(t => c.tag.includes(t))) continue;
       if (it.usg.length && !it.usg.some(u => g.usg.includes(u))) continue;
-      if (p.mask && !(tierFlags & p.mask)) continue;
-      want += it.nom;
+      const m = it.tier.reduce((a,t) => a | (TIERBIT[t]||0), 0);
+      if (m && !(tierFlags & m)) continue;
+      if (match(name, it)) want += it.nom;
     }
     if (!want) return;
     const pool = slotPool(type, ci, tierFlags);
     if (pool) exp += c.eff * (want / pool);
   });
   return exp;
+}
+
+/* Route value, and the reason this is not just "expected item count".
+
+   You go out for ONE thing but come back full. Those are different objectives:
+
+   - The target SATURATES. A second sledgehammer is worth nothing, so what matters
+     is P(at least one), not how many. With per-slot odds small and independent,
+     P(none) ~ exp(-lambda), so P(at least one) = 1 - exp(-lambda). That is 63% at
+     lambda=1, 86% at 2, 95% at 3 -- and the fourth cluster is nearly worthless.
+     Maximising expected count instead would happily send you to five sledgehammer
+     towns for the same practical result.
+   - The fill is LINEAR until the pack is full, then worthless.
+
+   So: satisfy the needs first, then use whatever budget is left to come home
+   loaded. FILL_WEIGHT is what one full pack is worth relative to one certain
+   target -- deliberately less than 1, because you went out for the target. */
+const FILL_WEIGHT = 0.45;
+
+function routeValue(stops, needKeys, slots){
+  let pAll = 1;
+  for (const k of needKeys){
+    const lam = stops.reduce((a,s) => a + (s.need[k] || 0), 0);
+    pAll *= 1 - Math.exp(-lam);
+  }
+  const fill = Math.min(slots, stops.reduce((a,s) => a + s.fill, 0));
+  return pAll + FILL_WEIGHT * (slots ? fill/slots : 0);
 }
 
 /* Cluster buildings into candidate stops, each with expected yield and dwell time.
@@ -813,26 +878,51 @@ function expectedYield(row, pl){
    the best by yield-per-metre from where you actually stand, and merge. */
 function candidates(pl, start){
   const CELL = 220, cells = new Map();
+  const needSets = pl.map(p => new Set(ENTRY[p.e.key].names));
+  const wantFill = FILL_ITEMS.size > 0;
+
   for (const row of INST.rows){
-    const y = expectedYield(row, pl);
-    if (y <= 0) continue;
+    // Skipping a usage removes the building entirely -- you are not walking into
+    // a military base for duct tape, and the tool cannot price that risk for you.
+    if (avoidOn.size){
+      const gu = (GROUPS[INST.types[row[0]]] || {usg:[]}).usg;
+      if (gu.some(u => avoidOn.has(u))) continue;
+    }
+    const need = {};
+    let any = 0;
+    pl.forEach((p, i) => {
+      const v = expectedFor(row, n => needSets[i].has(n));
+      if (v > 0){ need[p.e.key] = v; any += v; }
+    });
+    const fill = wantFill ? expectedFor(row, n => FILL_ITEMS.has(n)) : 0;
+    if (any <= 0 && fill <= 0.02) continue;
+
     const k = ((row[1]/CELL)|0) + "," + ((row[2]/CELL)|0);
     let c = cells.get(k);
-    if (!c) cells.set(k, c = {y:0, n:0, sx:0, sz:0, pts:0});
-    c.y += y; c.n++; c.sx += row[1]; c.sz += row[2];
-    // every loot spot in the building costs time to check, not just matching ones
+    if (!c) cells.set(k, c = {need:{}, fill:0, n:0, sx:0, sz:0, pts:0});
+    for (const [kk,v] of Object.entries(need)) c.need[kk] = (c.need[kk]||0) + v;
+    c.fill += fill; c.n++; c.sx += row[1]; c.sz += row[2];
+    // every loot spot costs time to check, not just the ones you want
     c.pts += (GROUPS[INST.types[row[0]]] || {cont:[]}).cont.reduce((a,x) => a + x.n, 0);
   }
-  const all = [...cells.values()]
-    .map(c => ({x:c.sx/c.n, z:c.sz/c.n, yield:c.y, n:c.n, pts:c.pts,
-                dwell:c.n * SEARCH_ENTER + c.pts * SEC_PER_SPOT}))
-    .filter(c => c.yield > 0.02);
 
-  const byYield = all.slice().sort((a,b) => b.yield - a.yield).slice(0, 50);
-  const byLocal = all.slice().sort((a,b) =>
-      b.yield/(1 + Math.hypot(b.x-start.x, b.z-start.z)/1000)
-    - a.yield/(1 + Math.hypot(a.x-start.x, a.z-start.z)/1000)).slice(0, 50);
-  return [...new Set([...byYield, ...byLocal])];
+  const all = [...cells.values()].map(c => ({
+    x:c.sx/c.n, z:c.sz/c.n, need:c.need, fill:c.fill, n:c.n, pts:c.pts,
+    dwell:c.n * SEARCH_ENTER + c.pts * SEC_PER_SPOT,
+    needTotal: Object.values(c.need).reduce((a,v) => a+v, 0),
+  }));
+
+  /* Shortlist on value PER SECOND, not raw value. This is what surfaces deer
+     stands: 2-3 slots drawn from a narrow Hunting pool means high odds per slot
+     and a ~35s stop, so they earn their place on a route between towns even
+     though a town has far more loot in total. */
+  const rate = c => (c.needTotal + FILL_WEIGHT*c.fill) / Math.max(30, c.dwell);
+  const near = c => 1 / (1 + Math.hypot(c.x-start.x, c.z-start.z)/1000);
+  const byRate  = all.slice().sort((a,b) => rate(b) - rate(a)).slice(0, 45);
+  const byLocal = all.slice().sort((a,b) => rate(b)*near(b) - rate(a)*near(a)).slice(0, 45);
+  const byNeed  = all.filter(c => c.needTotal > 0)
+                     .sort((a,b) => b.needTotal - a.needTotal).slice(0, 30);
+  return [...new Set([...byNeed, ...byRate, ...byLocal])];
 }
 
 const legSec = (a, b, mpk) => Math.hypot(a.x-b.x, a.z-b.z) / 1000 * mpk * 60;
@@ -845,10 +935,11 @@ function routeTime(stops, start, end, mpk){
 
 /* Greedy insertion: repeatedly add whichever stop buys the most expected items
    per extra minute, at its best position in the route. Then 2-opt the order. */
-function planRoute(cands, start, end, budgetSec, mpk, slots){
+function planRoute(cands, start, end, budgetSec, mpk, slots, needKeys){
   const chosen = [];
   const pool = cands.slice();
   let base = routeTime(chosen, start, end, mpk);
+  let baseVal = routeValue(chosen, needKeys, slots);
 
   for (;;){
     let best = null;
@@ -857,15 +948,19 @@ function planRoute(cands, start, end, budgetSec, mpk, slots){
         const trial = chosen.slice(); trial.splice(at, 0, pool[i]);
         const t = routeTime(trial, start, end, mpk);
         if (t > budgetSec) continue;
-        const gain = pool[i].yield / Math.max(1, t - base);
-        if (!best || gain > best.gain) best = {gain, i, at, t};
+        // marginal VALUE per marginal second: with P(at least one) saturating,
+        // a fourth cluster for the same item earns almost nothing and the
+        // greedy naturally moves on to filling the pack instead.
+        const gain = (routeValue(trial, needKeys, slots) - baseVal) / Math.max(1, t - base);
+        if (!best || gain > best.gain) best = {gain, i, at, t,
+                                               val: routeValue(trial, needKeys, slots)};
       }
     }
     if (!best) break;
     chosen.splice(best.at, 0, pool[best.i]);
     pool.splice(best.i, 1);
-    base = best.t;
-    if (chosen.reduce((a,c) => a + c.yield, 0) >= slots) break;   // pack is full
+    base = best.t; baseVal = best.val;
+    if (chosen.reduce((a,c) => a + c.fill + c.needTotal, 0) >= slots) break;  // full
   }
 
   // 2-opt: reversing a segment often shortens the path without changing which
@@ -916,7 +1011,9 @@ function renderPlan(){
   const pace = PACE[PACE_KEY];
   const start = pos, end = basePos || pos;
 
-  const stops = planRoute(candidates(pl, start), start, end, budget, MIN_PER_KM, slots);
+  const needKeys = pl.map(p => p.e.key);
+  const stops = planRoute(candidates(pl, start), start, end, budget, MIN_PER_KM,
+                          slots, needKeys);
   if (!stops.length){
     out.innerHTML = `<p class="muted" style="margin-top:12px">
       Nothing reachable in ${$("#tBudget").value} min. Raise the budget, pick a
@@ -928,7 +1025,11 @@ function renderPlan(){
   const dist = (() => { let d = 0, p = start;
     for (const s of stops){ d += Math.hypot(p.x-s.x, p.z-s.z); p = s; }
     return d + Math.hypot(p.x-end.x, p.z-end.z); })();
-  const yield_ = stops.reduce((a,s) => a + s.yield, 0);
+  const pFind = needKeys.map(k => ({
+    k, label: ENTRY[k].label,
+    lam: stops.reduce((a,s) => a + (s.need[k]||0), 0),
+  })).map(o => ({...o, p: 1 - Math.exp(-o.lam)}));
+  const fill = stops.reduce((a,s) => a + s.fill, 0);
   const energy = total * PLAYER[pace.e], water = total * PLAYER[pace.w];
 
   let t = 0, prev = start;
@@ -943,8 +1044,10 @@ function renderPlan(){
           ? `${(leg/60).toFixed(1)} min leg · ${s.n} buildings, ${s.pts} loot spots ·
              search ${(s.dwell/60).toFixed(1)} min` : ""}
         </div>
-        <div class="t">arrive ${Math.round(arrive/60)} min · expect
-          <b style="color:var(--accent)">${s.yield.toFixed(1)}</b> item${s.yield<1.5?"":"s"}</div>
+        <div class="t">arrive ${Math.round(arrive/60)} min${
+          s.needTotal > 0 ? ` · <b style="color:var(--accent)">${
+            (100*(1-Math.exp(-s.needTotal))).toFixed(0)}%</b> here` : ""}${
+          s.fill > 0.05 ? ` · +${s.fill.toFixed(1)} fill` : ""}</div>
       </span></div>`;
   }).join("");
 
@@ -952,9 +1055,20 @@ function renderPlan(){
     <div class="kpi">
       <div><b>${Math.round(total/60)}</b><span>minutes</span></div>
       <div><b>${(dist/1000).toFixed(1)}</b><span>km map</span></div>
-      <div><b>${yield_.toFixed(1)}</b><span>items</span></div>
+      <div><b>${Math.round(Math.min(fill, slots))}</b><span>pack fill</span></div>
       <div><b>${stops.length}</b><span>stops</span></div>
     </div>
+    <label class="fld">Odds of finding what you need</label>
+    ${pFind.map(o => `<div style="display:flex;justify-content:space-between;gap:8px;
+        padding:3px 0;font-size:13px">
+        <span>${o.label}</span>
+        <span style="color:${o.p>0.8?"var(--accent)":o.p>0.5?"var(--warn)":"var(--danger)"};
+          font-variant-numeric:tabular-nums">${(100*o.p).toFixed(0)}%
+          <span class="muted" style="font-size:11px">(${o.lam.toFixed(1)} expected)</span></span>
+      </div>`).join("")}
+    <p class="muted" style="margin:4px 0 0">Odds saturate: two good clusters get you to
+      ~86%, a third to ~95%. Past that the planner spends your time filling the pack
+      instead.</p>
     <p class="muted" style="margin:2px 0 0">
       Costs <b style="color:var(--warn)">${Math.round(energy)}</b> energy and
       <b style="color:var(--warn)">${Math.round(water)}</b> water
@@ -999,7 +1113,8 @@ function drawRoute(start, stops, end){
         height:19px;line-height:19px;text-align:center;font:700 11px/19px sans-serif;
         box-shadow:0 0 0 2px #12140f">${i+1}</div>`, iconSize:[19,19]})})
     .bindPopup(`<b>Stop ${i+1}</b><br>${s.n} buildings<br>
-      expect ${s.yield.toFixed(1)} wanted item${s.yield<1.5?"":"s"}<br>
+      ${s.needTotal>0 ? `<b>${(100*(1-Math.exp(-s.needTotal))).toFixed(0)}%</b> chance of a
+        needed item here<br>` : ""}${s.fill>0.05 ? `+${s.fill.toFixed(1)} pack fill<br>` : ""}
       <small>x ${Math.round(s.x)}, z ${Math.round(s.z)}</small>`))).addTo(map);
 }
 
@@ -1120,9 +1235,14 @@ function initMap(){
 
   dots = new Dots().addTo(map);
 
-  for (const [nm,x,z] of TOWNS)
-    L.marker([z,x], {interactive:false, keyboard:false, icon:L.divIcon({
-      className:"", html:`<div class="lbl">${nm}</div>`, iconSize:[0,0]})}).addTo(map);
+  /* Signs in Chernarus are Cyrillic, so show both: you navigate by what the sign
+     says, but you search by the Latin name. Names I could not confirm render
+     dimmed rather than being presented as fact. */
+  for (const p of PLACES)
+    L.marker([p.z, p.x], {interactive:false, keyboard:false, icon:L.divIcon({
+      className:"", iconSize:[0,0],
+      html:`<div class="lbl${p.unverified ? " unsure" : ""}">${p.name}<br>
+        <span class="cyr">${p.cyrillic}</span></div>`})}).addTo(map);
 
   buildLayerPanel();
 

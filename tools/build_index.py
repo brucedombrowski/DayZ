@@ -606,6 +606,98 @@ def parse_player_constants(text: str) -> dict:
     return out
 
 
+def resolve_profiles(cfg: dict, items: dict) -> dict:
+    """config/loot-profiles.json -> concrete item sets, validated against reality.
+
+    The point of validating here: a selector that matches nothing is a build
+    failure, not an empty set. When the upstream system renames or removes an
+    item, the profile that referenced it breaks loudly at build time instead of
+    silently becoming a no-op that quietly degrades every plan.
+
+    That is the whole reason preferences live in reviewable data with a validator
+    rather than in code -- code would just have the stale name too, without the
+    check.
+    """
+    live = {n for n, it in items.items() if it["nom"] > 0}
+    out, problems = [], []
+
+    for prof in cfg["profiles"]:
+        inc = prof.get("include", {})
+        got: set[str] = set()
+
+        for n in inc.get("names", []):
+            if n in live:
+                got.add(n)
+            elif n in items:
+                problems.append(f"{prof['id']}: '{n}' exists but has nominal 0")
+            else:
+                problems.append(f"{prof['id']}: no such item '{n}'")
+
+        for pat in inc.get("patterns", []):
+            rx = re.compile(pat, re.I)
+            hit = {n for n in live if rx.search(n)}
+            if not hit:
+                problems.append(f"{prof['id']}: pattern '{pat}' matched nothing")
+            got |= hit
+
+        for cat in inc.get("categories", []):
+            hit = {n for n in live if items[n]["cat"] == cat}
+            if not hit:
+                problems.append(f"{prof['id']}: category '{cat}' matched nothing")
+            got |= hit
+
+        for usg in inc.get("usages", []):
+            hit = {n for n in live if usg in items[n]["usg"]}
+            if not hit:
+                problems.append(f"{prof['id']}: usage '{usg}' matched nothing")
+            got |= hit
+
+        got -= set(prof.get("exclude", {}).get("names", []))
+        if not got:
+            problems.append(f"{prof['id']}: resolved to zero items")
+
+        out.append({"id": prof["id"], "label": prof["label"],
+                    "note": prof.get("note", ""), "items": sorted(got)})
+
+    if problems:
+        raise ValueError("loot-profiles.json is stale:\n  " + "\n  ".join(problems))
+
+    return {"profiles": out, "avoidableUsages": cfg.get("avoidableUsages", [])}
+
+
+def resolve_places(cfg: dict, rows: list[list[int]]) -> list[dict]:
+    """config/places.json -> validated place labels.
+
+    Names are the one thing in this project that cannot come from the data -- the
+    CLE carries coordinates and class names, never a place name, and sign text
+    lives in terrain PBOs Bohemia does not publish. So the names are human
+    knowledge and the Cyrillic is a transliteration, both fallible.
+
+    What we CAN check is the coordinates: a label with no buildings near it is a
+    typo, and a typo here mislabels the map. Fail the build instead.
+    """
+    rule = cfg.get("minBuildingsWithin", {})
+    radius, need = rule.get("radius", 400), rule.get("count", 4)
+    r2 = radius * radius
+    out, bad = [], []
+
+    for pl in cfg["places"]:
+        x, z = pl["x"], pl["z"]
+        n = sum(1 for _ti, bx, bz, _t, _u in rows
+                if (bx - x) ** 2 + (bz - z) ** 2 <= r2)
+        if n < need:
+            bad.append(f"{pl['name']} ({x},{z}): only {n} buildings within {radius}m")
+            continue
+        out.append({"name": pl["name"], "cyrillic": pl.get("cyrillic", ""),
+                    "x": x, "z": z, "n": n,
+                    "unverified": bool(pl.get("unverified"))})
+
+    if bad:
+        raise ValueError("places.json coordinates look wrong:\n  " + "\n  ".join(bad))
+    out.sort(key=lambda p: p["name"])
+    return out
+
+
 def build_landmarks(names: list[str], rows: list[list[int]]) -> dict:
     pats = [(k, lbl, glyph, col, re.compile(rx, re.I)) for k, lbl, glyph, col, rx in LANDMARKS]
     kinds, pts = [], []
@@ -680,6 +772,8 @@ def cmd_build() -> int:
     items = parse_types((ce / "db" / "types.xml").read_bytes())
     groups = parse_proto((ce / "mapgroupproto.xml").read_bytes())
     limits = parse_limits((ce / "cfglimitsdefinition.xml").read_bytes())
+    profiles = resolve_profiles(
+        json.loads((ROOT / "config" / "loot-profiles.json").read_text()), items)
     area = parse_areaflags((ce / "areaflags.map").read_bytes())
     names, rows = parse_pos((ce / "mapgrouppos.xml").read_bytes(), set(groups), area)
 
@@ -702,6 +796,7 @@ def cmd_build() -> int:
     write_json(OUT / "groups.json", groups)
     write_json(OUT / "instances.json", {"types": names, "rows": rows})
     write_json(OUT / "limits.json", limits)
+    write_json(OUT / "profiles.json", profiles)
     tier_px = render_tier_png(OUT / "tiers.png", area)
     print(f"  docs/data/tiers.png  {(OUT/'tiers.png').stat().st_size:,}b  ({tier_px}x{tier_px})")
     uq = render_unique_png(OUT / "unique.png", area)
@@ -710,6 +805,9 @@ def cmd_build() -> int:
     print(f"  docs/data/usage_*.png  {len(zones)} zone overlays")
     landmarks = build_landmarks(names, rows)
     write_json(OUT / "landmarks.json", landmarks)
+    places = resolve_places(
+        json.loads((ROOT / "config" / "places.json").read_text()), rows)
+    write_json(OUT / "places.json", places)
     toxic = parse_effect_areas((ce / "cfgEffectArea.json").read_bytes())
     write_json(OUT / "toxic.json", toxic)
     events = parse_events((ce / "cfgeventspawns.xml").read_bytes(),

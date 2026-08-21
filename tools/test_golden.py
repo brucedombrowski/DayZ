@@ -160,6 +160,38 @@ check("Plastic_Explosive gated by Unique",
 check("RemoteDetonator gated by Unique",
       gated_by_unique("RemoteDetonator", "tools"), (False, True))
 
+# --- loot profiles: the preference config must stay resolvable ----------------
+# resolve_profiles() already fails the BUILD on a stale selector; these assert the
+# resolved output is sane, and that the derived-value case is actually captured.
+profiles = load("profiles")
+by_id = {p["id"]: p for p in profiles["profiles"]}
+check("profile ids", sorted(by_id),
+      ["basebuild", "foodwater", "guncare", "hunting", "medical", "ragsource"])
+check("no empty profile", [p["id"] for p in profiles["profiles"] if not p["items"]], [])
+check("basebuild has SledgeHammer", "SledgeHammer" in by_id["basebuild"]["items"], True)
+check("ragsource is all clothes",
+      all(items[n]["cat"] == "clothes" for n in by_id["ragsource"]["items"]), True)
+check("hunting profile is Hunting-usage",
+      all("Hunting" in items[n]["usg"] for n in by_id["hunting"]["items"]), True)
+# every referenced item must still spawn, or the profile is quietly dead weight
+dead = [n for p in profiles["profiles"] for n in p["items"] if not items[n]["nom"]]
+check("no non-spawning items in profiles", dead[:3], [])
+
+# --- saturating objective ----------------------------------------------------
+# P(at least one) must flatten, or the planner would keep spending time on a
+# target it has already almost certainly found.
+import math
+p_at = lambda lam: 1 - math.exp(-lam)
+check("lambda=1 -> 63%", round(p_at(1), 2), 0.63)
+check("lambda=2 -> 86%", round(p_at(2), 2), 0.86)
+check("lambda=3 -> 95%", round(p_at(3), 2), 0.95)
+check("3rd unit adds less than 1st", (p_at(3) - p_at(2)) < (p_at(1) - p_at(0)), True)
+
+# Deer stands: the value-per-second case. A narrow usage pool concentrates odds.
+ds = groups["Land_Misc_DeerStand1"]
+check("deer stand is Hunting-only", ds["usg"], ["Hunting"])
+check("deer stand is small", sum(c["n"] for c in ds["cont"]) <= 4, True)
+
 # --- crafting graph ----------------------------------------------------------
 made_by = {}
 for r in recipes:

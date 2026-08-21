@@ -1,0 +1,224 @@
+{
+  "_about": [
+    "Place names and coordinates. HAND-AUTHORED and NOT derived from game data.",
+    "",
+    "The CLE config carries no place names at all -- mapgrouppos.xml is coordinates and",
+    "building class names, nothing else. Road-sign text lives in the terrain object data",
+    "inside the PBOs, which Bohemia does not publish. So this file is human knowledge, and",
+    "it is the one place in the project where that is true.",
+    "",
+    "`cyrillic` is what the in-game signs actually read, which is what you navigate by.",
+    "These are transliterations and should be CORRECTED AGAINST SIGNS SEEN IN GAME -- treat",
+    "any of them as provisional until someone has stood in front of the sign.",
+    "",
+    "Coordinates ARE validated at build time: every place must have buildings near it, or",
+    "the build fails. That catches a fat-fingered coordinate, which is the failure mode that",
+    "would otherwise silently mislabel half the map."
+  ],
+  "minBuildingsWithin": {
+    "radius": 400,
+    "count": 4
+  },
+  "places": [
+    {
+      "name": "Chernogorsk",
+      "cyrillic": "Черногорск",
+      "x": 6700,
+      "z": 2500
+    },
+    {
+      "name": "Elektrozavodsk",
+      "cyrillic": "Электрозаводск",
+      "x": 10400,
+      "z": 2200
+    },
+    {
+      "name": "Berezino",
+      "cyrillic": "Березино",
+      "x": 12100,
+      "z": 9000
+    },
+    {
+      "name": "Zelenogorsk",
+      "cyrillic": "Зеленогорск",
+      "x": 2600,
+      "z": 5200
+    },
+    {
+      "name": "Novodmitrovsk",
+      "cyrillic": "Новодмитровск",
+      "x": 11900,
+      "z": 14300
+    },
+    {
+      "name": "Severograd",
+      "cyrillic": "Североград",
+      "x": 8000,
+      "z": 12700
+    },
+    {
+      "name": "Vybor",
+      "cyrillic": "Выбор",
+      "x": 3900,
+      "z": 8900
+    },
+    {
+      "name": "Stary Sobor",
+      "cyrillic": "Старый Собор",
+      "x": 6100,
+      "z": 7700
+    },
+    {
+      "name": "Novy Sobor",
+      "cyrillic": "Новый Собор",
+      "x": 7000,
+      "z": 7700
+    },
+    {
+      "name": "Balota",
+      "cyrillic": "Балота",
+      "x": 4800,
+      "z": 2400
+    },
+    {
+      "name": "Kamenka",
+      "cyrillic": "Каменка",
+      "x": 1900,
+      "z": 2100
+    },
+    {
+      "name": "Solnichniy",
+      "cyrillic": "Солничный",
+      "x": 13500,
+      "z": 6300
+    },
+    {
+      "name": "Krasnostav",
+      "cyrillic": "Красностав",
+      "x": 11200,
+      "z": 12200
+    },
+    {
+      "name": "Gorka",
+      "cyrillic": "Горка",
+      "x": 9600,
+      "z": 8800
+    },
+    {
+      "name": "Myshkino",
+      "cyrillic": "Мышкино",
+      "x": 2000,
+      "z": 7500
+    },
+    {
+      "name": "Tisy",
+      "cyrillic": "Тисы",
+      "x": 1600,
+      "z": 13800
+    },
+    {
+      "name": "Kabanino",
+      "cyrillic": "Кабанино",
+      "x": 4800,
+      "z": 8200
+    },
+    {
+      "name": "Pustoshka",
+      "cyrillic": "Пустошка",
+      "x": 3200,
+      "z": 7000
+    },
+    {
+      "name": "Pavlovo",
+      "cyrillic": "Павлово",
+      "x": 2100,
+      "z": 3400
+    },
+    {
+      "name": "Nadezhdino",
+      "cyrillic": "Надеждино",
+      "x": 4400,
+      "z": 6900,
+      "unverified": true
+    },
+    {
+      "name": "Grishino",
+      "cyrillic": "Гришино",
+      "x": 5900,
+      "z": 10100,
+      "unverified": true
+    },
+    {
+      "name": "Polana",
+      "cyrillic": "Полана",
+      "x": 10500,
+      "z": 6100,
+      "unverified": true
+    },
+    {
+      "name": "Gvozdno",
+      "cyrillic": "Гвоздно",
+      "x": 8900,
+      "z": 11700,
+      "unverified": true
+    },
+    {
+      "name": "Kozlovka",
+      "cyrillic": "Козловка",
+      "x": 4500,
+      "z": 4600,
+      "unverified": true
+    },
+    {
+      "name": "Staroye",
+      "cyrillic": "Старое",
+      "x": 10100,
+      "z": 5300,
+      "unverified": true
+    },
+    {
+      "name": "Msta",
+      "cyrillic": "Мста",
+      "x": 11400,
+      "z": 5300,
+      "unverified": true
+    },
+    {
+      "name": "Dubrovka",
+      "cyrillic": "Дубровка",
+      "x": 10000,
+      "z": 10100,
+      "unverified": true
+    },
+    {
+      "name": "Novaya Petrovka",
+      "cyrillic": "Новая Петровка",
+      "x": 3425,
+      "z": 13056,
+      "unverified": true
+    },
+    {
+      "name": "Rify",
+      "cyrillic": "Рифы",
+      "x": 13800,
+      "z": 11200,
+      "unverified": true
+    },
+    {
+      "name": "NW Airfield",
+      "cyrillic": "Северо-Западный аэродром",
+      "x": 4600,
+      "z": 10300
+    },
+    {
+      "name": "Green Mountain",
+      "cyrillic": "Зелёная Гора",
+      "x": 3700,
+      "z": 6000
+    }
+  ],
+  "_notes": {
+    "signs": "Extracting real sign text would need the terrain PBOs -- a PC install plus DayZ Tools. See issue #11, same blocker as item icons.",
+    "unverified": "Entries flagged `unverified: true` have validated COORDINATES but a name I recalled rather than confirmed. The map renders them dimmed. Correcting one is a one-line edit here."
+  }
+}
