@@ -268,6 +268,10 @@
 
       <label class="fld">Pace</label>
       <div class="filt" id="planPace"></div>
+      <label class="fld" for="tPace">Travel pace — <b id="tPaceV">5.2</b> min per km
+        <span style="text-transform:none;letter-spacing:0"> (map distance)</span></label>
+      <input type="range" id="tPace" min="2.5" max="15" step="0.1" value="5.2" style="width:100%">
+      <p class="muted" id="paceNote" style="margin-top:4px"></p>
 
       <label class="fld" for="tSlots">Free slots — <b id="tSlotsV">40</b></label>
       <input type="range" id="tSlots" min="5" max="120" step="5" value="40" style="width:100%">
@@ -657,14 +661,26 @@ function wireLoot(conts){
    value-per-minute, then improved with 2-opt. Exact optimum is not worth it --
    the inputs (spawn odds, your actual pace) are far noisier than the routing. */
 
-const PACE = {                       // ground speed and metabolic drain per pace
-  walk:   {label:"Walk",   mps:2.5, e:"eWalk",   w:"wWalk"},
-  jog:    {label:"Jog",    mps:4.3, e:"eJog",    w:"wJog"},
-  sprint: {label:"Sprint", mps:5.8, e:"eSprint", w:"wSprint"},
+/* Pace sets the metabolic drain, which IS published (playerconstants.c), and a
+   default travel pace, which is NOT.
+
+   DayZ's actual movement speeds live in the engine's animation graph inside the
+   PBOs -- `human.c` only declares GetCurrentMovementSpeed() as proto native. So
+   minPerKm below is an estimate, not sourced, and you should calibrate it: time
+   one real run between two known points and set it. The slider is the honest
+   place to put a number we cannot look up.
+
+   It is expressed per km of STRAIGHT-LINE map distance, so calibrating from real
+   play folds in hills, treelines and fences automatically -- no separate terrain
+   fudge factor to double-count. */
+const PACE = {
+  walk:   {label:"Walk",   minPerKm:10.4, e:"eWalk",   w:"wWalk"},
+  jog:    {label:"Jog",    minPerKm:5.2,  e:"eJog",    w:"wJog"},
+  sprint: {label:"Sprint", minPerKm:3.6,  e:"eSprint", w:"wSprint",
+           note:"stamina-limited — not sustainable for a long run"},
 };
-// Straight lines lie: hills, treelines and fences all add distance.
-const TERRAIN = 1.25;
 const SEARCH_SEC = 12;               // per building: enter, check slots, leave
+let MIN_PER_KM = PACE.jog.minPerKm;
 let PACE_KEY = "jog", basePos = null, planLine = null, planMarks = null;
 let CLICK_MODE = "pos", baseMarker = null;
 
@@ -699,13 +715,21 @@ function wirePlanControls(){
   });
 
   $("#planPace").innerHTML = Object.entries(PACE).map(([k,v]) =>
-    `<button data-p="${k}" aria-pressed="${k===PACE_KEY}">${v.label} ${v.mps} m/s</button>`).join("");
+    `<button data-p="${k}" aria-pressed="${k===PACE_KEY}">${v.label}</button>`).join("");
   $("#planPace").querySelectorAll("button").forEach(b => b.onclick = () => {
     PACE_KEY = b.dataset.p;
+    MIN_PER_KM = PACE[PACE_KEY].minPerKm;
+    $("#tPace").value = MIN_PER_KM; $("#tPaceV").textContent = MIN_PER_KM.toFixed(1);
     $("#planPace").querySelectorAll("button").forEach(x =>
       x.setAttribute("aria-pressed", String(x.dataset.p === PACE_KEY)));
     renderPlan();
   });
+
+  $("#tPace").oninput = () => {
+    MIN_PER_KM = +$("#tPace").value;
+    $("#tPaceV").textContent = MIN_PER_KM.toFixed(1);
+    renderPlan();
+  };
 
   for (const [inp, out] of [["#tBudget","#tBudgetV"], ["#tSlots","#tSlotsV"]])
     $(inp).oninput = () => { $(out).textContent = $(inp).value; renderPlan(); };
@@ -788,27 +812,27 @@ function candidates(pl, start){
   return [...new Set([...byYield, ...byLocal])];
 }
 
-const legSec = (a, b, mps) => Math.hypot(a.x-b.x, a.z-b.z) * TERRAIN / mps;
+const legSec = (a, b, mpk) => Math.hypot(a.x-b.x, a.z-b.z) / 1000 * mpk * 60;
 
-function routeTime(stops, start, end, mps){
+function routeTime(stops, start, end, mpk){
   let t = 0, prev = start;
-  for (const s of stops){ t += legSec(prev, s, mps) + s.dwell; prev = s; }
-  return t + legSec(prev, end, mps);
+  for (const s of stops){ t += legSec(prev, s, mpk) + s.dwell; prev = s; }
+  return t + legSec(prev, end, mpk);
 }
 
 /* Greedy insertion: repeatedly add whichever stop buys the most expected items
    per extra minute, at its best position in the route. Then 2-opt the order. */
-function planRoute(cands, start, end, budgetSec, mps, slots){
+function planRoute(cands, start, end, budgetSec, mpk, slots){
   const chosen = [];
   const pool = cands.slice();
-  let base = routeTime(chosen, start, end, mps);
+  let base = routeTime(chosen, start, end, mpk);
 
   for (;;){
     let best = null;
     for (let i = 0; i < pool.length; i++){
       for (let at = 0; at <= chosen.length; at++){
         const trial = chosen.slice(); trial.splice(at, 0, pool[i]);
-        const t = routeTime(trial, start, end, mps);
+        const t = routeTime(trial, start, end, mpk);
         if (t > budgetSec) continue;
         const gain = pool[i].yield / Math.max(1, t - base);
         if (!best || gain > best.gain) best = {gain, i, at, t};
@@ -829,7 +853,7 @@ function planRoute(cands, start, end, budgetSec, mps, slots){
       for (let k = i + 1; k < chosen.length; k++){
         const alt = chosen.slice();
         alt.splice(i, k - i + 1, ...chosen.slice(i, k + 1).reverse());
-        if (routeTime(alt, start, end, mps) < routeTime(chosen, start, end, mps)){
+        if (routeTime(alt, start, end, mpk) < routeTime(chosen, start, end, mpk)){
           chosen.splice(0, chosen.length, ...alt); improved = true;
         }
       }
@@ -852,13 +876,23 @@ function renderPlan(){
     clearRoute(); return;
   }
 
+  $("#paceNote").innerHTML =
+    `<b>Estimate — not from game data.</b> DayZ's movement speeds live in the engine,
+     not in anything Bohemia publishes, so calibrate this yourself. Time a run you know
+     and divide: <b>Cherno→Elektro is 3.7 km</b>, <b>Kamenka→Cherno 4.8 km</b>,
+     <b>Zelenogorsk→NWAF 5.5 km</b>. Twenty minutes for Cherno→Elektro is 5.4 min/km.
+     Measuring against map distance folds in hills and detours, so this is slower than
+     your raw ground speed (${(1000/(MIN_PER_KM*60)).toFixed(1)} m/s made good).` +
+    (PACE[PACE_KEY].note ? `<br><span style="color:var(--warn)">Sprint is
+     ${PACE[PACE_KEY].note}.</span>` : "");
+
   const pl = plans();
   const budget = +$("#tBudget").value * 60;
   const slots = +$("#tSlots").value;
   const pace = PACE[PACE_KEY];
   const start = pos, end = basePos || pos;
 
-  const stops = planRoute(candidates(pl, start), start, end, budget, pace.mps, slots);
+  const stops = planRoute(candidates(pl, start), start, end, budget, MIN_PER_KM, slots);
   if (!stops.length){
     out.innerHTML = `<p class="muted" style="margin-top:12px">
       Nothing reachable in ${$("#tBudget").value} min. Raise the budget, pick a
@@ -866,16 +900,16 @@ function renderPlan(){
     clearRoute(); return;
   }
 
-  const total = routeTime(stops, start, end, pace.mps);
+  const total = routeTime(stops, start, end, MIN_PER_KM);
   const dist = (() => { let d = 0, p = start;
-    for (const s of stops){ d += Math.hypot(p.x-s.x, p.z-s.z)*TERRAIN; p = s; }
-    return d + Math.hypot(p.x-end.x, p.z-end.z)*TERRAIN; })();
+    for (const s of stops){ d += Math.hypot(p.x-s.x, p.z-s.z); p = s; }
+    return d + Math.hypot(p.x-end.x, p.z-end.z); })();
   const yield_ = stops.reduce((a,s) => a + s.yield, 0);
   const energy = total * PLAYER[pace.e], water = total * PLAYER[pace.w];
 
   let t = 0, prev = start;
   const rows = stops.map((s,i) => {
-    const leg = legSec(prev, s, pace.mps);
+    const leg = legSec(prev, s, MIN_PER_KM);
     t += leg; const arrive = t; t += s.dwell; prev = s;
     return `<div class="stop" data-i="${i}">
       <span class="no">${i+1}</span>
@@ -892,7 +926,7 @@ function renderPlan(){
   out.innerHTML = `
     <div class="kpi">
       <div><b>${Math.round(total/60)}</b><span>minutes</span></div>
-      <div><b>${(dist/1000).toFixed(1)}</b><span>km</span></div>
+      <div><b>${(dist/1000).toFixed(1)}</b><span>km map</span></div>
       <div><b>${yield_.toFixed(1)}</b><span>items</span></div>
       <div><b>${stops.length}</b><span>stops</span></div>
     </div>
@@ -908,7 +942,7 @@ function renderPlan(){
     ${rows}
     <div class="stop" style="border-left-color:#6aaed6">
       <span class="no">B</span><span class="d"><b>${basePos ? "Base" : "Back to start"} — ${end.x}, ${end.z}</b>
-      <div class="t">${(legSec(prev, end, pace.mps)/60).toFixed(1)} min home</div></span></div>
+      <div class="t">${(legSec(prev, end, MIN_PER_KM)/60).toFixed(1)} min home</div></span></div>
     <p class="muted" style="margin-top:10px">Expected yield assumes every slot is
     unlooted. On a populated server, treat it as an upper bound.</p>`;
 
@@ -1262,7 +1296,11 @@ function applyHash(){
   const bs = (q.get("base")||"").split(",").map(Number);
   if (bs.length === 2 && bs.every(Number.isFinite)) setBase(bs[0], bs[1]);
   if (q.get("min")){ $("#tBudget").value = q.get("min"); $("#tBudgetV").textContent = q.get("min"); }
-  if (PACE[q.get("pace")]) PACE_KEY = q.get("pace");
+  if (PACE[q.get("pace")]){ PACE_KEY = q.get("pace"); MIN_PER_KM = PACE[PACE_KEY].minPerKm; }
+  if (q.get("mpk")){
+    MIN_PER_KM = +q.get("mpk");
+    $("#tPace").value = MIN_PER_KM; $("#tPaceV").textContent = MIN_PER_KM.toFixed(1);
+  }
   if (q.get("tab")) requestAnimationFrame(() => {
     tab(q.get("tab"));
     if (q.get("tab") === "plan") renderPlan(); else render();

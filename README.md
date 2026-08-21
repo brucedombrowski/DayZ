@@ -303,8 +303,12 @@ routing.
 
 - **Expected yield** per stop = `eff` slots × the item's share of the nominal competing for
   that slot. An estimate, and an upper bound: it assumes nothing has been looted.
-- **Pace** sets both speed and metabolic drain. Straight-line distance is multiplied by 1.25
-  because hills and treelines are real.
+- **Pace** sets metabolic drain, which is published, and a default travel pace, which is
+  **not**. DayZ's movement speeds live in the engine's animation graph inside the PBOs —
+  `human.c` only declares `GetCurrentMovementSpeed()` as `proto native`. So travel pace is a
+  slider you calibrate, expressed in **minutes per km of straight-line map distance**, which
+  folds in hills and detours with no separate fudge factor. Reference distances:
+  Cherno→Elektro 3.7 km, Kamenka→Cherno 4.8 km, Zelenogorsk→NWAF 5.5 km.
 - **Energy and water** come from `playerconstants.c` — Bohemia's own numbers, not community
   estimates. Jogging costs 0.3 energy and 0.3 water per second out of 5000.
 - **Candidates** are shortlisted by both raw yield *and* yield-per-metre from where you
