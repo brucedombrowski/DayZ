@@ -309,6 +309,24 @@ One recurring source of bugs, so it is written down once here:
 
 ---
 
+## Known unknowns
+
+Things we deliberately do not know, recorded so they are not silently forgotten.
+
+**Untagged containers** (issue #2, closed as "not worth the playtime"). 30 `tools`
+containers declare no `tag` at all, including `Land_Tisy_Garages` at 41 points. Whether a
+`floor`-tagged item may spawn there is unconfirmed. We take the conservative reading
+(`STRICT_TAGS` in `docs/index.html`), so a site that *might* spawn nothing is never
+recommended. Flipping it would add ~2% of instances.
+
+**Display names and icons** (issue #11). Vanilla names live behind `#STR_` keys and icons
+live in the game PBOs; neither is published anywhere public. Class names are all we have,
+which is why `DryBag` / `WaterproofBag` / `DrysackBag` are hard to tell apart.
+
+**Hoarding pressure** (issue #12). `count_in_player` / `count_in_hoarder` decide whether
+player-held copies suppress respawns. We parse `nominal` but not these flags yet, so a
+hoard-sensitive item can look more available than it is on a busy server.
+
 ## Open questions
 
 These need answering before or during v1. They are the real risk in this project.
