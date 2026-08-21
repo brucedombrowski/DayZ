@@ -51,6 +51,10 @@
         "scripts/4_world/classes/recipes/recipes"
       ],
       "files": {
+        "scripts/3_game/playerconstants.c": {
+          "bytes": 17805,
+          "sha256": "054e8678950adb6e538d390ccc2efab0e0c836cbb043f2932dd78e8424877ca4"
+        },
         "scripts/4_world/classes/recipes/recipes/attachholster.c": {
           "bytes": 3518,
           "sha256": "03d945d825c19453f0a45f215e86ea90efcded35c1885a596f81224a7a8aeca8"

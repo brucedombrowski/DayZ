@@ -30,8 +30,14 @@ def check(label, got, want):
         fails.append(f"{label}: got {got!r}, want {want!r}")
 
 
-def points_for(building, it, strict_tags=True):
-    """Mirror of pointsFor() in docs/index.html. If these drift, the site lies."""
+def points_for(building, it, strict_tags=True, field="eff"):
+    """Mirror of pointsFor() in docs/index.html. If these drift, the site lies.
+
+    field="eff" counts slots that actually hold loot (lootmax applied);
+    field="n" counts raw loot points. The gap between them is large -- 85% of
+    containers cap below their point count -- so ranking on raw points overstates
+    real loot roughly 4x.
+    """
     g = groups.get(building)
     if not g:
         return 0
@@ -43,7 +49,7 @@ def points_for(building, it, strict_tags=True):
             continue
         if it["tag"] and (strict_tags or c["tag"]) and not any(t in c["tag"] for t in it["tag"]):
             continue
-        n += c["n"]
+        n += c[field]
     return n
 
 
@@ -74,10 +80,14 @@ check("SledgeHammer tiers", sh["tier"], ["Tier3", "Tier4"])
 check("proto types matching", sum(1 for b in groups if points_for(b, sh) > 0), 134)
 
 mask = sum(TIER[t] for t in sh["tier"])
-ungated = sum(points_for(inst["types"][r[0]], sh) for r in inst["rows"])
+raw = sum(points_for(inst["types"][r[0]], sh, field="n") for r in inst["rows"])
+eff = sum(points_for(inst["types"][r[0]], sh) for r in inst["rows"])
 gated = sum(points_for(inst["types"][r[0]], sh) for r in inst["rows"] if r[3] & mask)
-check("points ungated", ungated, 32624)
-check("points tier-gated", gated, 11182)
+check("raw loot points", raw, 32624)
+check("effective slots", round(eff, 1), 11490.7)
+check("effective, tier-gated", round(gated, 1), 3918.6)
+# lootmax matters: if this ratio ever approaches 1, the cap stopped being applied
+check("lootmax cuts loot by >half", eff < raw * 0.5, True)
 
 # The two 300m cluster cells that make the case for tier gating.
 # Chernogorsk is structurally excellent for a sledgehammer and almost entirely
@@ -85,14 +95,14 @@ check("points tier-gated", gated, 11182)
 # Without the gate they look like a 352 vs 356 tie -- a coin flip that would send
 # you to the wrong town.
 def cell_points(cx, cz, gate):
-    return sum(points_for(inst["types"][r[0]], sh) for r in inst["rows"]
-               if r[1] // 300 == cx and r[2] // 300 == cz
-               and (not gate or r[3] & mask))
+    return round(sum(points_for(inst["types"][r[0]], sh) for r in inst["rows"]
+                     if r[1] // 300 == cx and r[2] // 300 == cz
+                     and (not gate or r[3] & mask)), 1)
 
-check("Chernogorsk ungated", cell_points(21, 8, False), 352)
-check("Chernogorsk tier-gated", cell_points(21, 8, True), 13)
-check("Zelenogorsk ungated", cell_points(8, 17, False), 356)
-check("Zelenogorsk tier-gated", cell_points(8, 17, True), 356)
+check("Chernogorsk ungated", cell_points(21, 8, False), 102.4)
+check("Chernogorsk tier-gated", cell_points(21, 8, True), 7.0)
+check("Zelenogorsk ungated", cell_points(8, 17, False), 108.2)
+check("Zelenogorsk tier-gated", cell_points(8, 17, True), 108.2)
 
 # --- reverse loot lookup ---------------------------------------------------
 # Mirrors buildingLoot() in docs/index.html. The tier gate uses the flags of the

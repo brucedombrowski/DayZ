@@ -171,27 +171,52 @@ def parse_types(data: bytes) -> dict:
 
 
 def parse_proto(data: bytes) -> dict:
-    """mapgroupproto.xml -> {building: {usg[], cont:[{cat[],tag[],n}]}}
+    """mapgroupproto.xml -> {building: {usg[], cont:[{cat[],tag[],n,eff}]}}
 
-    Only containers with at least one loot point matter to us.
+    `n` is the raw loot-point count. `eff` is how many of those points actually
+    hold loot at once, and it is the number that matters.
+
+    A point is a *place* an item can sit; `lootmax` caps how many are occupied.
+    85% of containers declare a lootmax BELOW their point count -- a shed with 5
+    points and lootmax=2 never holds more than 2 items -- so ranking on raw
+    points overstates real loot, badly and unevenly. The group-level lootmax caps
+    the whole building across its containers, applied here proportionally.
+
+    Defaults come from <defaults> in the file itself (group 6, container 4)
+    rather than being hardcoded, so an upstream change to them flows through.
     """
+    root = ET.fromstring(data)
+    dflt = {d.get("name"): int(d.get("lootmax"))
+            for d in root.findall("./defaults/default") if d.get("lootmax")}
+    g_default = dflt.get("group", 6)
+    c_default = dflt.get("container", 4)
+
     out = {}
-    for g in ET.fromstring(data).findall("group"):
-        conts = []
+    for g in root.findall("group"):
+        conts, caps = [], []
         for c in g.findall("container"):
             n = len(c.findall("point"))
             if not n:
                 continue
+            cap = min(n, int(c.get("lootmax") or c_default))
+            caps.append(cap)
             conts.append({
                 "cat": sorted({x.get("name") for x in c.findall("category")}),
                 "tag": sorted({x.get("name") for x in c.findall("tag")}),
                 "n": n,
             })
-        if conts:
-            out[g.get("name")] = {
-                "usg": sorted({u.get("name") for u in g.findall("usage")}),
-                "cont": conts,
-            }
+        if not conts:
+            continue
+        glm = int(g.get("lootmax") or g_default)
+        total = sum(caps)
+        scale = min(1.0, glm / total) if total else 1.0
+        for c, cap in zip(conts, caps):
+            c["eff"] = round(cap * scale, 3)
+        out[g.get("name")] = {
+            "usg": sorted({u.get("name") for u in g.findall("usage")}),
+            "lootmax": glm,
+            "cont": conts,
+        }
     return out
 
 
@@ -555,6 +580,32 @@ def parse_player_spawns(data: bytes) -> list[dict]:
     return out
 
 
+RE_CONST = re.compile(r"static\s+const\s+float\s+(\w+)\s*=\s*([\d.]+)")
+
+
+def parse_player_constants(text: str) -> dict:
+    """playerconstants.c -> the metabolism numbers a loot run actually costs.
+
+    Energy and water both drain per second at a rate set by pace, out of 5000
+    max. Published in Bohemia's own script source, so these are the real values
+    the server uses rather than community estimates.
+    """
+    got = {k: float(v) for k, v in RE_CONST.findall(re.sub(r"//.*", "", text))}
+    want = {
+        "energyMax": "SL_ENERGY_MAX", "waterMax": "SL_WATER_MAX",
+        "energyLow": "SL_ENERGY_LOW", "waterLow": "SL_WATER_LOW",
+        "eBasal": "METABOLIC_SPEED_ENERGY_BASAL", "eWalk": "METABOLIC_SPEED_ENERGY_WALK",
+        "eJog": "METABOLIC_SPEED_ENERGY_JOG", "eSprint": "METABOLIC_SPEED_ENERGY_SPRINT",
+        "wBasal": "METABOLIC_SPEED_WATER_BASAL", "wWalk": "METABOLIC_SPEED_WATER_WALK",
+        "wJog": "METABOLIC_SPEED_WATER_JOG", "wSprint": "METABOLIC_SPEED_WATER_SPRINT",
+    }
+    out = {k: got[v] for k, v in want.items() if v in got}
+    missing = [v for k, v in want.items() if v not in got]
+    if missing:
+        raise ValueError(f"playerconstants.c missing {missing}")
+    return out
+
+
 def build_landmarks(names: list[str], rows: list[list[int]]) -> dict:
     pats = [(k, lbl, glyph, col, re.compile(rx, re.I)) for k, lbl, glyph, col, rx in LANDMARKS]
     kinds, pts = [], []
@@ -666,6 +717,9 @@ def cmd_build() -> int:
     write_json(OUT / "events.json", events)
     pspawn = parse_player_spawns((ce / "cfgplayerspawnpoints.xml").read_bytes())
     write_json(OUT / "spawns.json", pspawn)
+    pconst = parse_player_constants(
+        (CACHE / "script-diff" / "scripts/3_game/playerconstants.c").read_text(errors="ignore"))
+    write_json(OUT / "player.json", pconst)
     write_json(OUT / "recipes.json", recipes)
     write_json(OUT / "meta.json", {
         "map": "chernarusplus",

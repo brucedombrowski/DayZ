@@ -10,14 +10,28 @@ spawn points for those items, ranked by how worthwhile the trip is.
 This is not a hand-curated loot table. It is derived from the game's actual **Central Loot
 Economy (CLE)** configuration, so the answers reflect what the server is really doing.
 
-## Two features, one data layer
+## What it does
 
 | | |
 |---|---|
-| **Loot map** (this doc) | "I need item X, I'm at Y — where do I go?" |
-| **[Crafting guide](CRAFTING.md)** | "How do I make X?" — a hierarchical tree that recurses until every leaf is loot, then hands those leaves to the loot map. |
+| **Run planner** | "I'm here, my base is there, I have 45 minutes — plan the route." The point of the whole thing. |
+| **Loot map** | "I need item X, I'm at Y — where do I go?" |
+| **Catalog** | Browse 1,389 items by category, tier and usage, because nobody remembers `WaterproofBag_Orange`. |
+| **Building lookup** | Click any building — everything that can spawn in it, gated by the tier it stands in. |
+| **[Crafting guide](CRAFTING.md)** | "How do I make X?" — recurses to loot leaves, which hand off to the map. |
 
-They are separate tools. They share the parsers, the item index, and the data-sync pipeline.
+They share the parsers, the item index, and the data-sync pipeline.
+
+### Loot points are not loot
+
+A loot *point* is a place an item can sit; `lootmax` caps how many are occupied at once.
+**85% of containers declare a lootmax below their point count** — a shed with 5 points and
+`lootmax=2` never holds more than 2 items. Map-wide, only **24% of loot points hold loot**.
+
+Ranking on raw points overstates real loot ~4x, and unevenly, so it reorders results. We
+compute an effective slot count per container at build time (`eff`), capped again by the
+group's own `lootmax`, and rank on that. For `SledgeHammer`: 32,624 raw points →
+**11,491 effective**, or 3,919 after tier gating.
 
 **Target environment: PS5 Official DayZ (vanilla Chernarus+, later Livonia).**
 Official console servers run Bohemia's stock mission config unmodified, which means the
@@ -275,6 +289,26 @@ One recurring source of bugs, so it is written down once here:
 ---
 
 ## Scope
+
+### Run planner
+
+The real question is not "where does X spawn" but "given where I am, where my base is, and
+how long I have, what route should I run". That is an
+[orienteering problem](https://en.wikipedia.org/wiki/Orienteering_problem): visit a subset
+of scored sites, start and end fixed, maximise value under a time budget.
+
+Solved greedily by marginal expected-items-per-minute, then improved with 2-opt. Exact
+optimum is not worth chasing — spawn odds and your real pace are far noisier than the
+routing.
+
+- **Expected yield** per stop = `eff` slots × the item's share of the nominal competing for
+  that slot. An estimate, and an upper bound: it assumes nothing has been looted.
+- **Pace** sets both speed and metabolic drain. Straight-line distance is multiplied by 1.25
+  because hills and treelines are real.
+- **Energy and water** come from `playerconstants.c` — Bohemia's own numbers, not community
+  estimates. Jogging costs 0.3 energy and 0.3 water per second out of 5000.
+- **Candidates** are shortlisted by both raw yield *and* yield-per-metre from where you
+  stand. Yield alone starves the solver of nearby options and leaves short budgets unused.
 
 ### v1 — the sledgehammer question, answered correctly
 

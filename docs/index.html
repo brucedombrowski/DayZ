@@ -147,6 +147,19 @@
   .lt li:hover{color:var(--accent)}
   .lt .pc{color:var(--accent);font-variant-numeric:tabular-nums;flex-shrink:0}
   .lt .pc.lo{color:var(--dim)}
+  input[type=range]{accent-color:var(--accent2)}
+  .stop{display:flex;gap:9px;padding:7px 9px;margin-bottom:5px;background:var(--panel2);
+    border:1px solid var(--line);border-left:3px solid var(--accent2);border-radius:5px;
+    cursor:pointer}
+  .stop:hover{border-left-color:var(--accent)}
+  .stop .no{font-weight:700;color:var(--accent);min-width:18px}
+  .stop .d{flex:1;min-width:0}
+  .stop .t{font-size:11px;color:var(--dim)}
+  .kpi{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px}
+  .kpi div{flex:1;min-width:70px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:5px;padding:6px 8px}
+  .kpi b{display:block;font-size:15px;color:var(--accent)}
+  .kpi span{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
   .more{background:none;border:0;color:var(--accent);font:inherit;font-size:11.5px;
     cursor:pointer;padding:4px 0 0}
   .more:hover{text-decoration:underline}
@@ -207,6 +220,7 @@
     <div class="tabs" role="tablist">
       <button role="tab" id="tab-loot" aria-selected="true" aria-controls="pane-loot">Loot map</button>
       <button role="tab" id="tab-cat" aria-selected="false" aria-controls="pane-cat">Catalog</button>
+      <button role="tab" id="tab-plan" aria-selected="false" aria-controls="pane-plan">Run</button>
       <button role="tab" id="tab-bld" aria-selected="false" aria-controls="pane-bld">Building</button>
       <button role="tab" id="tab-craft" aria-selected="false" aria-controls="pane-craft">Crafting</button>
     </div>
@@ -242,6 +256,23 @@
       <label class="fld">Tier</label><div class="filt" id="ftier"></div>
       <label class="fld">Where it spawns</label><div class="filt" id="fusg"></div>
       <div id="catout"></div>
+    </div>
+
+    <div class="pane" id="pane-plan" role="tabpanel">
+      <label class="fld">Start / base</label>
+      <div class="filt" id="planMode"></div>
+      <p class="muted" id="planPts" style="margin-top:6px"></p>
+
+      <label class="fld" for="tBudget">Time budget — <b id="tBudgetV">45</b> min</label>
+      <input type="range" id="tBudget" min="10" max="180" step="5" value="45" style="width:100%">
+
+      <label class="fld">Pace</label>
+      <div class="filt" id="planPace"></div>
+
+      <label class="fld" for="tSlots">Free slots — <b id="tSlotsV">40</b></label>
+      <input type="range" id="tSlots" min="5" max="120" step="5" value="40" style="width:100%">
+
+      <div id="planOut"></div>
     </div>
 
     <div class="pane" id="pane-bld" role="tabpanel">
@@ -306,7 +337,8 @@ const TOWNS = [
   ["Kabanino",4800,8200],["Pustoshka",3200,7000],
 ];
 
-let ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS, MADE_BY;
+let ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS,
+    PLAYER, MADE_BY;
 /* Catalog entries. Colour variants of one item (WaterproofBag_Green/Orange/…)
    share the same physical loot points, so they collapse into a single entry and
    are counted ONCE — summing them would multiply the same points by 3. Families
@@ -321,9 +353,9 @@ const picked = [];
 /* ---------- data ---------- */
 async function boot(){
   const j = async n => (await fetch(`data/${n}.json`)).json();
-  [ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS] =
+  [ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS, PLAYER] =
     await Promise.all(["items","groups","instances","recipes","meta","limits","landmarks",
-      "toxic","events","spawns"].map(j));
+      "toxic","events","spawns","player"].map(j));
   LIMITS.value.forEach((n,i) => TIERBIT[n] = 1 << i);
   buildEntries();
 
@@ -417,7 +449,7 @@ function pointsFor(building, it){
     if (it.cat && !c.cat.includes(it.cat)) continue;
     if (it.tag.length && (STRICT_TAGS || c.tag.length)
         && !it.tag.some(t => c.tag.includes(t))) continue;
-    n += c.n;
+    n += c.eff;
   }
   return n;
 }
@@ -560,7 +592,7 @@ function showBuilding(row){
   const type = INST.types[ti];
   const tiers = LIMITS.value.filter((_,i) => tierFlags & (1<<i));
   const conts = buildingLoot(type, tierFlags);
-  const pts = conts.reduce((a,c) => a + c.c.n, 0);
+  const pts = conts.reduce((a,c) => a + c.c.eff, 0);
 
   $("#pane-bld").innerHTML = `
     <label class="fld">${human(type.replace(/^Land_/,""))}</label>
@@ -568,7 +600,8 @@ function showBuilding(row){
       color:var(--dim)">${type}</div>
     <p class="muted" style="margin:6px 0 0">
       x ${x}, z ${z} · <span style="color:var(--accent)">${tiers.join(", ")||"no tier"}</span>
-      · ${pts} loot point${pts===1?"":"s"} in ${conts.length} container${conts.length===1?"":"s"}
+      · ${pts.toFixed(1)} avg loot slots (${conts.reduce((a,c)=>a+c.c.n,0)} points)
+        in ${conts.length} container${conts.length===1?"":"s"}
       · usage ${(GROUPS[type]||{usg:[]}).usg.join(", ")||"—"}
     </p>
     <p class="muted" style="margin:6px 0 0">
@@ -578,7 +611,7 @@ function showBuilding(row){
     </p>` +
     (conts.length ? conts.map((cc,ci) => `
       <div class="cont">
-        <h4>${cc.c.tag.join(" / ") || "any placement"} — ${cc.c.n} slot${cc.c.n===1?"":"s"}</h4>
+        <h4>${cc.c.tag.join(" / ") || "any placement"} — ${cc.c.eff.toFixed(1)} of ${cc.c.n} slots filled</h4>
         <div class="sub">${cc.c.cat.join(", ")} · ${cc.items.length} possible items</div>
         <ul class="lt" data-c="${ci}">${lootRows(cc, 12)}</ul>
         ${cc.items.length > 12
@@ -612,6 +645,298 @@ function wireLoot(conts){
     if (ENTRY[k] && !picked.includes(k)) picked.push(k);
     tab("loot"); render();
   });
+}
+
+/* ---------- loot run planner ----------
+
+   The real question is not "where does X spawn" but "given where I am, where my
+   base is, and how long I have, what route should I run".
+
+   That is an orienteering problem: visit a subset of scored sites, start and end
+   fixed, maximise value under a time budget. Solved greedily by marginal
+   value-per-minute, then improved with 2-opt. Exact optimum is not worth it --
+   the inputs (spawn odds, your actual pace) are far noisier than the routing. */
+
+const PACE = {                       // ground speed and metabolic drain per pace
+  walk:   {label:"Walk",   mps:2.5, e:"eWalk",   w:"wWalk"},
+  jog:    {label:"Jog",    mps:4.3, e:"eJog",    w:"wJog"},
+  sprint: {label:"Sprint", mps:5.8, e:"eSprint", w:"wSprint"},
+};
+// Straight lines lie: hills, treelines and fences all add distance.
+const TERRAIN = 1.25;
+const SEARCH_SEC = 12;               // per building: enter, check slots, leave
+let PACE_KEY = "jog", basePos = null, planLine = null, planMarks = null;
+let CLICK_MODE = "pos", baseMarker = null;
+
+function setBase(x, z){
+  basePos = {x, z};
+  if (baseMarker) baseMarker.remove();
+  baseMarker = L.marker([z,x], {icon:L.divIcon({className:"",
+    html:`<div class="mk" style="font-size:17px">🏠</div>`, iconSize:[18,18]})})
+    .bindPopup(`<b>Base</b><br><small>x ${x}, z ${z}</small>`).addTo(map);
+  CLICK_MODE = "pos";
+  syncModeButtons();
+  renderPlan();
+}
+
+function syncModeButtons(){
+  $("#planMode").querySelectorAll("button").forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.m === CLICK_MODE)));
+}
+
+function wirePlanControls(){
+  $("#planMode").innerHTML =
+    `<button data-m="pos" aria-pressed="true">Set position</button>
+     <button data-m="base">Set base</button>
+     <button data-m="clr">Base = start</button>`;
+  $("#planMode").querySelectorAll("button").forEach(b => b.onclick = () => {
+    if (b.dataset.m === "clr"){
+      basePos = null;
+      if (baseMarker){ baseMarker.remove(); baseMarker = null; }
+      CLICK_MODE = "pos";
+    } else CLICK_MODE = b.dataset.m;
+    syncModeButtons(); renderPlan();
+  });
+
+  $("#planPace").innerHTML = Object.entries(PACE).map(([k,v]) =>
+    `<button data-p="${k}" aria-pressed="${k===PACE_KEY}">${v.label} ${v.mps} m/s</button>`).join("");
+  $("#planPace").querySelectorAll("button").forEach(b => b.onclick = () => {
+    PACE_KEY = b.dataset.p;
+    $("#planPace").querySelectorAll("button").forEach(x =>
+      x.setAttribute("aria-pressed", String(x.dataset.p === PACE_KEY)));
+    renderPlan();
+  });
+
+  for (const [inp, out] of [["#tBudget","#tBudgetV"], ["#tSlots","#tSlotsV"]])
+    $(inp).oninput = () => { $(out).textContent = $(inp).value; renderPlan(); };
+}
+
+/* Total nominal competing for one container slot, memoised. Recomputing this per
+   building would mean scanning 1,970 items 11,360 times. */
+const _poolMemo = new Map();
+function slotPool(type, ci, tierFlags){
+  const key = type + "|" + ci + "|" + tierFlags;
+  let v = _poolMemo.get(key);
+  if (v !== undefined) return v;
+  const g = GROUPS[type], c = g.cont[ci];
+  let total = 0;
+  for (const it of Object.values(ITEMS)){
+    if (!it.nom || !it.cat) continue;
+    if (!c.cat.includes(it.cat)) continue;
+    if (it.tag.length && !it.tag.some(t => c.tag.includes(t))) continue;
+    if (it.usg.length && !it.usg.some(u => g.usg.includes(u))) continue;
+    const m = it.tier.reduce((a,t) => a | (TIERBIT[t]||0), 0);
+    if (m && !(tierFlags & m)) continue;
+    total += it.nom;
+  }
+  _poolMemo.set(key, total);
+  return total;
+}
+
+/* Expected number of wanted items in one building.
+
+   eff (not raw points) is how many slots actually hold loot; share is the item's
+   nominal over everything competing for that slot. Both are estimates, and the
+   product is what you can reasonably expect to walk away with. */
+function expectedYield(row, pl){
+  const [ti, , , tierFlags] = row;
+  const type = INST.types[ti], g = GROUPS[type];
+  if (!g) return 0;
+  let exp = 0;
+  g.cont.forEach((c, ci) => {
+    let want = 0;
+    for (const p of pl){
+      const it = p.it;
+      if (!it.nom || !it.cat) continue;
+      if (!c.cat.includes(it.cat)) continue;
+      if (it.tag.length && !it.tag.some(t => c.tag.includes(t))) continue;
+      if (it.usg.length && !it.usg.some(u => g.usg.includes(u))) continue;
+      if (p.mask && !(tierFlags & p.mask)) continue;
+      want += it.nom;
+    }
+    if (!want) return;
+    const pool = slotPool(type, ci, tierFlags);
+    if (pool) exp += c.eff * (want / pool);
+  });
+  return exp;
+}
+
+/* Cluster buildings into candidate stops, each with expected yield and dwell time.
+
+   Shortlisting purely by yield starves the solver of local options: the richest
+   clusters are wherever the best towns are, which on a 45-minute budget may all
+   be unreachable, leaving the route half empty. So take the best by raw yield AND
+   the best by yield-per-metre from where you actually stand, and merge. */
+function candidates(pl, start){
+  const CELL = 220, cells = new Map();
+  for (const row of INST.rows){
+    const y = expectedYield(row, pl);
+    if (y <= 0) continue;
+    const k = ((row[1]/CELL)|0) + "," + ((row[2]/CELL)|0);
+    let c = cells.get(k);
+    if (!c) cells.set(k, c = {y:0, n:0, sx:0, sz:0});
+    c.y += y; c.n++; c.sx += row[1]; c.sz += row[2];
+  }
+  const all = [...cells.values()]
+    .map(c => ({x:c.sx/c.n, z:c.sz/c.n, yield:c.y, n:c.n, dwell:c.n * SEARCH_SEC}))
+    .filter(c => c.yield > 0.02);
+
+  const byYield = all.slice().sort((a,b) => b.yield - a.yield).slice(0, 50);
+  const byLocal = all.slice().sort((a,b) =>
+      b.yield/(1 + Math.hypot(b.x-start.x, b.z-start.z)/1000)
+    - a.yield/(1 + Math.hypot(a.x-start.x, a.z-start.z)/1000)).slice(0, 50);
+  return [...new Set([...byYield, ...byLocal])];
+}
+
+const legSec = (a, b, mps) => Math.hypot(a.x-b.x, a.z-b.z) * TERRAIN / mps;
+
+function routeTime(stops, start, end, mps){
+  let t = 0, prev = start;
+  for (const s of stops){ t += legSec(prev, s, mps) + s.dwell; prev = s; }
+  return t + legSec(prev, end, mps);
+}
+
+/* Greedy insertion: repeatedly add whichever stop buys the most expected items
+   per extra minute, at its best position in the route. Then 2-opt the order. */
+function planRoute(cands, start, end, budgetSec, mps, slots){
+  const chosen = [];
+  const pool = cands.slice();
+  let base = routeTime(chosen, start, end, mps);
+
+  for (;;){
+    let best = null;
+    for (let i = 0; i < pool.length; i++){
+      for (let at = 0; at <= chosen.length; at++){
+        const trial = chosen.slice(); trial.splice(at, 0, pool[i]);
+        const t = routeTime(trial, start, end, mps);
+        if (t > budgetSec) continue;
+        const gain = pool[i].yield / Math.max(1, t - base);
+        if (!best || gain > best.gain) best = {gain, i, at, t};
+      }
+    }
+    if (!best) break;
+    chosen.splice(best.at, 0, pool[best.i]);
+    pool.splice(best.i, 1);
+    base = best.t;
+    if (chosen.reduce((a,c) => a + c.yield, 0) >= slots) break;   // pack is full
+  }
+
+  // 2-opt: reversing a segment often shortens the path without changing which
+  // stops are visited, buying budget for one more.
+  for (let pass = 0; pass < 3; pass++){
+    let improved = false;
+    for (let i = 0; i < chosen.length - 1; i++)
+      for (let k = i + 1; k < chosen.length; k++){
+        const alt = chosen.slice();
+        alt.splice(i, k - i + 1, ...chosen.slice(i, k + 1).reverse());
+        if (routeTime(alt, start, end, mps) < routeTime(chosen, start, end, mps)){
+          chosen.splice(0, chosen.length, ...alt); improved = true;
+        }
+      }
+    if (!improved) break;
+  }
+  return chosen;
+}
+
+function renderPlan(){
+  const out = $("#planOut");
+  $("#planPts").innerHTML = pos
+    ? `Start <b>${pos.x}, ${pos.z}</b> → base <b>${basePos ? basePos.x+", "+basePos.z
+        : "same (round trip)"}</b>`
+    : `<span style="color:var(--warn)">Click the map to set your start position.</span>`;
+
+  if (!pos || !picked.length){
+    out.innerHTML = `<p class="muted" style="margin-top:14px">
+      Set your position and add at least one item on the
+      <b>Loot map</b> or <b>Catalog</b> tab, then come back.</p>`;
+    clearRoute(); return;
+  }
+
+  const pl = plans();
+  const budget = +$("#tBudget").value * 60;
+  const slots = +$("#tSlots").value;
+  const pace = PACE[PACE_KEY];
+  const start = pos, end = basePos || pos;
+
+  const stops = planRoute(candidates(pl, start), start, end, budget, pace.mps, slots);
+  if (!stops.length){
+    out.innerHTML = `<p class="muted" style="margin-top:12px">
+      Nothing reachable in ${$("#tBudget").value} min. Raise the budget, pick a
+      faster pace, or move closer.</p>`;
+    clearRoute(); return;
+  }
+
+  const total = routeTime(stops, start, end, pace.mps);
+  const dist = (() => { let d = 0, p = start;
+    for (const s of stops){ d += Math.hypot(p.x-s.x, p.z-s.z)*TERRAIN; p = s; }
+    return d + Math.hypot(p.x-end.x, p.z-end.z)*TERRAIN; })();
+  const yield_ = stops.reduce((a,s) => a + s.yield, 0);
+  const energy = total * PLAYER[pace.e], water = total * PLAYER[pace.w];
+
+  let t = 0, prev = start;
+  const rows = stops.map((s,i) => {
+    const leg = legSec(prev, s, pace.mps);
+    t += leg; const arrive = t; t += s.dwell; prev = s;
+    return `<div class="stop" data-i="${i}">
+      <span class="no">${i+1}</span>
+      <span class="d"><b>${Math.round(s.x)}, ${Math.round(s.z)}</b>
+        <div class="t">${(Math.hypot(s.x,s.z) >= 0 ? "" : "")}${
+          Math.round(Math.hypot(prev.x-s.x, prev.z-s.z))>=0
+          ? `${(leg/60).toFixed(1)} min leg · ${s.n} buildings · search ${(s.dwell/60).toFixed(1)} min` : ""}
+        </div>
+        <div class="t">arrive ${Math.round(arrive/60)} min · expect
+          <b style="color:var(--accent)">${s.yield.toFixed(1)}</b> item${s.yield<1.5?"":"s"}</div>
+      </span></div>`;
+  }).join("");
+
+  out.innerHTML = `
+    <div class="kpi">
+      <div><b>${Math.round(total/60)}</b><span>minutes</span></div>
+      <div><b>${(dist/1000).toFixed(1)}</b><span>km</span></div>
+      <div><b>${yield_.toFixed(1)}</b><span>items</span></div>
+      <div><b>${stops.length}</b><span>stops</span></div>
+    </div>
+    <p class="muted" style="margin:2px 0 0">
+      Costs <b style="color:var(--warn)">${Math.round(energy)}</b> energy and
+      <b style="color:var(--warn)">${Math.round(water)}</b> water
+      (${(100*energy/PLAYER.energyMax).toFixed(0)}% of a full bar).
+      Leave above ${PLAYER.energyLow} or health starts dropping.
+    </p>
+    <label class="fld">Route</label>
+    <div class="stop" style="border-left-color:#d2694a">
+      <span class="no">A</span><span class="d"><b>Start — ${start.x}, ${start.z}</b></span></div>
+    ${rows}
+    <div class="stop" style="border-left-color:#6aaed6">
+      <span class="no">B</span><span class="d"><b>${basePos ? "Base" : "Back to start"} — ${end.x}, ${end.z}</b>
+      <div class="t">${(legSec(prev, end, pace.mps)/60).toFixed(1)} min home</div></span></div>
+    <p class="muted" style="margin-top:10px">Expected yield assumes every slot is
+    unlooted. On a populated server, treat it as an upper bound.</p>`;
+
+  drawRoute(start, stops, end);
+  out.querySelectorAll(".stop[data-i]").forEach(el => el.onclick = () => {
+    const s = stops[+el.dataset.i];
+    map.setView([s.z, s.x], 1);
+  });
+}
+
+function clearRoute(){
+  if (planLine){ planLine.remove(); planLine = null; }
+  if (planMarks){ planMarks.remove(); planMarks = null; }
+}
+
+function drawRoute(start, stops, end){
+  clearRoute();
+  const pts = [[start.z,start.x], ...stops.map(s => [s.z,s.x]), [end.z,end.x]];
+  planLine = L.polyline(pts, {color:"#b8c94a", weight:2.5, opacity:.85,
+    dashArray:"6 4", interactive:false}).addTo(map);
+  planMarks = L.layerGroup(stops.map((s,i) =>
+    L.marker([s.z,s.x], {icon:L.divIcon({className:"",
+      html:`<div style="background:#b8c94a;color:#0f1108;border-radius:50%;width:19px;
+        height:19px;line-height:19px;text-align:center;font:700 11px/19px sans-serif;
+        box-shadow:0 0 0 2px #12140f">${i+1}</div>`, iconSize:[19,19]})})
+    .bindPopup(`<b>Stop ${i+1}</b><br>${s.n} buildings<br>
+      expect ${s.yield.toFixed(1)} wanted item${s.yield<1.5?"":"s"}<br>
+      <small>x ${Math.round(s.x)}, z ${Math.round(s.z)}</small>`))).addTo(map);
 }
 
 /* ---------- map ---------- */
@@ -749,6 +1074,7 @@ function initMap(){
      ~14px target at any zoom. */
   map.on("click", e => {
     const x = Math.round(e.latlng.lng), z = Math.round(e.latlng.lat);
+    if (CLICK_MODE === "base"){ setBase(x, z); return; }
     const mPerPx = 1 / Math.pow(2, map.getZoom());
     const hit = nearestBuilding(x, z, Math.max(6, 14 * mPerPx));
     hit ? showBuilding(hit) : setPos(x, z);
@@ -928,6 +1254,20 @@ function applyHash(){
       const hit = nearestBuilding(b[0], b[1], 120);
       if (hit) showBuilding(hit);
     });
+  // Shareable run plans: items, start, base, budget, pace, tab.
+  for (const k of (q.get("pick")||"").split(",").filter(Boolean))
+    if (ENTRY[k] && !picked.includes(k)) picked.push(k);
+  const me = (q.get("me")||"").split(",").map(Number);
+  if (me.length === 2 && me.every(Number.isFinite)) setPos(me[0], me[1]);
+  const bs = (q.get("base")||"").split(",").map(Number);
+  if (bs.length === 2 && bs.every(Number.isFinite)) setBase(bs[0], bs[1]);
+  if (q.get("min")){ $("#tBudget").value = q.get("min"); $("#tBudgetV").textContent = q.get("min"); }
+  if (PACE[q.get("pace")]) PACE_KEY = q.get("pace");
+  if (q.get("tab")) requestAnimationFrame(() => {
+    tab(q.get("tab"));
+    if (q.get("tab") === "plan") renderPlan(); else render();
+  });
+
   const want = new Set((q.get("l")||"").split(",").filter(Boolean));
   if (want.size) requestAnimationFrame(() =>
     document.querySelectorAll("#layPanel button").forEach(b => {
@@ -942,6 +1282,7 @@ function setPos(x, z){
   pinMarker = L.circleMarker([z,x],{radius:7,color:"#fff",weight:2,
     fillColor:"#d2694a",fillOpacity:1}).addTo(map).bindPopup(`You: ${x}, ${z}`);
   render();
+  if ($("#pane-plan").hasAttribute("data-active")) renderPlan();
 }
 
 function bearing(from, to){
@@ -975,6 +1316,7 @@ function render(){
       shown everywhere.)` : ""}
     </div>` : "";
 
+  if ($("#pane-plan").hasAttribute("data-active")) renderPlan();
   const res = search(pl);
   if (!res.length){
     const anyStruct = INST.rows.some(r => pl.some(p => p.by[r[0]] > 0));
@@ -998,14 +1340,14 @@ function render(){
       <li data-i="${i}">
         <div class="r1"><span class="nm">${Math.round(r.x)}, ${Math.round(r.z)}</span>
           <span class="dist">${pos ? (r.d/1000).toFixed(1)+" km "+bearing(pos,r) : ""}</span></div>
-        <div class="r2">${r.pts} loot points · ${r.n} buildings · ${r.top}</div>
+        <div class="r2">${r.pts.toFixed(1)} avg loot slots · ${r.n} buildings · ${r.top}</div>
       </li>`).join("") + `</ul>`;
 
   out.querySelectorAll("li").forEach(li => li.onclick = () => {
     const r = res[+li.dataset.i];
     map.setView([r.z,r.x], 0);
     L.popup().setLatLng([r.z,r.x]).setContent(
-      `<b>${r.pts} loot points</b> in ${r.n} buildings<br>${r.top}<br>
+      `<b>${r.pts.toFixed(1)} avg loot slots</b> in ${r.n} buildings<br>${r.top}<br>
        <small>x ${Math.round(r.x)}, z ${Math.round(r.z)}</small><br>
        <a href="https://www.izurvive.com/chernarus/#location=${Math.round(r.x)};${Math.round(r.z)};6"
           target="_blank" rel="noopener noreferrer">Open in iZurvive ↗</a>`).openOn(map);
@@ -1154,7 +1496,7 @@ function showCraft(item){
 
 /* ---------- tabs ---------- */
 function tab(which){
-  for (const t of ["loot","cat","bld","craft"]){
+  for (const t of ["loot","cat","plan","bld","craft"]){
     $("#tab-"+t).setAttribute("aria-selected", String(t === which));
     $("#pane-"+t).toggleAttribute("data-active", t === which);
   }
@@ -1162,6 +1504,7 @@ function tab(which){
 $("#tab-loot").onclick = () => tab("loot");
 $("#tab-cat").onclick = () => tab("cat");
 $("#tab-bld").onclick = () => tab("bld");
+$("#tab-plan").onclick = () => { tab("plan"); renderPlan(); };
 $("#tab-craft").onclick = () => tab("craft");
 
 for (const id of ["#px","#pz"]) $(id).onchange = () => {
@@ -1184,6 +1527,7 @@ boot().then(() => {
     render();
   });
 
+  wirePlanControls();
   chipRow("#fcat", LIMITS.category, "cat");
   chipRow("#ftier", [...LIMITS.value, "any"], "tier");
   chipRow("#fusg", LIMITS.usage, "usg");
