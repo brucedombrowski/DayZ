@@ -1,5 +1,7 @@
 # DayZ Loot Finder
 
+### ▶ Live: **https://brucedombrowski.github.io/DayZ/**
+
 A browser map that answers one question: **"I need item X and I'm at position Y — where do I go?"**
 
 You pick one or more items, drop your current position on the map, and it shows the real
@@ -369,7 +371,30 @@ establish the current console build number and pin to the matching tag, not to `
 
 ---
 
+## Running it
+
+```bash
+python3 tools/build_index.py sync     # fetch pinned upstream files, verify sha256
+python3 tools/build_index.py build    # parse cache/ -> docs/data/*.json
+python3 -m http.server -d docs 8000   # http://localhost:8000
+```
+
+`sync --update` repins to upstream HEAD and rewrites `sources.lock.json`. Rebuilding without
+changing the lockfile must produce byte-identical output; that is the determinism contract.
+
+`cache/` is gitignored — upstream data is fetched, never vendored.
+
 ## Status
 
-**Specification.** No implementation yet — this README is the plan, and the numbers in it
-come from real queries against the real data, not estimates.
+**v1 live.** The loot map and crafting tree both work against real data. The numbers in this
+README come from queries against the real files, and the browser reproduces them exactly.
+
+**Not yet trustworthy for tier-gated items** — see
+[issue #6](https://github.com/brucedombrowski/DayZ/issues/6). The UI says so where it matters.
+
+Open questions are tracked as
+[issues](https://github.com/brucedombrowski/DayZ/issues); those labelled
+[`needs-decision`](https://github.com/brucedombrowski/DayZ/issues?q=is%3Aissue+is%3Aopen+label%3Aneeds-decision)
+are blocked on a human answer.
+
+See also [SECURITY.md](SECURITY.md) — how upstream `.c` and XML files are ingested safely.

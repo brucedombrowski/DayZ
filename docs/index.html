@@ -301,34 +301,64 @@ function search(){
 }
 
 /* ---------- map ---------- */
+/* The base map IS the data: 11,360 building positions. Towns, roads and the
+   coastline emerge from where DayZ actually put buildings, so we need no
+   third-party tiles.
+
+   The canvas lives on the map container rather than in a Leaflet pane. Panes are
+   CSS-transformed during zoom animation, which would drag a non-animated child
+   along and smear it; sitting outside them, we simply redraw in container space.
+   Redraws are rAF-coalesced so a drag costs at most one pass per frame. */
 class Dots extends L.Layer {
   onAdd(m){
     this._m = m;
-    this._c = L.DomUtil.create("canvas","leaflet-zoom-animated");
-    this._c.style.pointerEvents = "none";
-    m.getPanes().overlayPane.appendChild(this._c);
-    m.on("moveend zoomend resize", this._draw, this);
-    this._draw();
+    this._c = L.DomUtil.create("canvas");
+    Object.assign(this._c.style, {position:"absolute", left:0, top:0,
+                                 pointerEvents:"none", zIndex:200});
+    m.getContainer().appendChild(this._c);
+    this._on = () => this.redraw();
+    m.on("move zoom moveend zoomend resize viewreset", this._on);
+    this.redraw();
     return this;
   }
-  onRemove(m){ this._c.remove(); m.off("moveend zoomend resize", this._draw, this); }
-  setData(rows, hot){ this._rows = rows; this._hot = hot; this._draw(); }
+  onRemove(m){ this._c.remove(); m.off("move zoom moveend zoomend resize viewreset", this._on); }
+  setData(hot){ this._hot = hot; this.redraw(); }
+  redraw(){
+    if (this._raf) return;
+    this._raf = requestAnimationFrame(() => { this._raf = 0; this._draw(); });
+  }
   _draw(){
-    if (!this._m) return;
-    const m = this._m, sz = m.getSize(), tl = m.containerPointToLayerPoint([0,0]);
-    L.DomUtil.setPosition(this._c, tl);
-    const dpr = window.devicePixelRatio || 1;
-    this._c.width = sz.x*dpr; this._c.height = sz.y*dpr;
-    this._c.style.width = sz.x+"px"; this._c.style.height = sz.y+"px";
+    const m = this._m;
+    if (!m) return;
+    const sz = m.getSize(), dpr = window.devicePixelRatio || 1;
+    if (this._c.width !== sz.x*dpr || this._c.height !== sz.y*dpr){
+      this._c.width = sz.x*dpr; this._c.height = sz.y*dpr;
+      this._c.style.width = sz.x+"px"; this._c.style.height = sz.y+"px";
+    }
     const g = this._c.getContext("2d");
-    g.scale(dpr,dpr);
-    const r = Math.max(0.6, Math.min(3, 0.9 * Math.pow(2, m.getZoom())));
-    for (const [ti,x,z] of INST.rows){
-      const hot = this._hot && this._hot[ti] > 0;
-      const p = m.latLngToContainerPoint([z,x]);
-      if (p.x < -4 || p.y < -4 || p.x > sz.x+4 || p.y > sz.y+4) continue;
-      g.fillStyle = hot ? "#b8c94a" : "#3a4230";
-      g.beginPath(); g.arc(p.x, p.y, hot ? r*1.5 : r, 0, 6.284); g.fill();
+    g.setTransform(dpr,0,0,dpr,0,0);
+    g.clearRect(0,0,sz.x,sz.y);
+
+    // One projection of the map origin plus a scale factor beats calling
+    // latLngToContainerPoint 11,360 times per frame.
+    const o = m.latLngToContainerPoint([0,0]);
+    const u = m.latLngToContainerPoint([1000,1000]);
+    const sx = (u.x - o.x)/1000, sz_ = (u.y - o.y)/1000;
+    const r = Math.max(0.55, Math.min(3, 0.9 * Math.pow(2, m.getZoom())));
+
+    for (const pass of [0,1]){                 // draw hot dots last, on top
+      g.fillStyle = pass ? "#b8c94a" : "#3a4230";
+      g.beginPath();
+      for (const row of INST.rows){
+        const hot = this._hot ? this._hot[row[0]] > 0 : false;
+        if ((pass === 1) !== hot) continue;
+        const px = o.x + row[1]*sx, py = o.y + row[2]*sz_;
+        if (px < -4 || py < -4 || px > sz.x+4 || py > sz.y+4) continue;
+        const rr = pass ? r*1.6 : r;
+        g.moveTo(px+rr, py);
+        g.arc(px, py, rr, 0, 6.2832);
+      }
+      g.fill();
     }
   }
 }
@@ -375,11 +405,11 @@ function render(){
     out.innerHTML = `<p class="muted" style="margin-top:14px">
       Add an item to see where it spawns. Click the map to set your position and
       results will rank by travel distance.</p>`;
-    note.innerHTML = ""; dots.setData(INST.rows, null); return;
+    note.innerHTML = ""; dots.setData(null); return;
   }
 
   const w = weights();
-  dots.setData(INST.rows, w);
+  dots.setData(w);
 
   const tiers = [...new Set(picked.flatMap(n => ITEMS[n].tier))].sort();
   note.innerHTML = tiers.length ? `<div class="note">
