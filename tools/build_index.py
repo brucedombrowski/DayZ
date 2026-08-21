@@ -318,6 +318,34 @@ def write_png(path: Path, w: int, h: int, rgba: bytearray) -> None:
 TIER_RGB = [(90, 170, 70), (215, 190, 60), (225, 140, 45), (210, 65, 55)]
 
 
+def render_unique_png(path: Path, area, down: int = 4) -> int:
+    """The `Unique` valueflag (bit 4) as its own overlay.
+
+    It is not a fifth tier -- it is an orthogonal flag layered on top of one, so
+    it cannot share the tier ramp. Only five items carry it, all demolition gear:
+    M79, Plastic_Explosive and RemoteDetonator spawn ONLY here; ClaymoreMine and
+    Ammo_40mm_Explosive also accept Tier3/4.
+    """
+    grid, _usage, value = area
+    n = grid // down
+    px = bytearray(n * n * 4)
+    hit = 0
+    for oy in range(n):
+        z0 = (n - 1 - oy) * down
+        for ox in range(n):
+            bits = 0
+            for r in range(z0, z0 + down):
+                base = r * grid + ox * down
+                for c in range(down):
+                    bits |= value[base + c]
+            if bits & 0x10:
+                i = (oy * n + ox) * 4
+                px[i:i+4] = bytes((235, 90, 220, 175))
+                hit += 1
+    write_png(path, n, n, px)
+    return hit
+
+
 def render_tier_png(path: Path, area, down: int = 4) -> int:
     """Downsample the 4096^2 value plane into an RGBA overlay.
 
@@ -444,6 +472,89 @@ def parse_effect_areas(data: bytes) -> list[dict]:
     return out
 
 
+# How each event group is presented. Anything not listed is skipped: the file
+# carries loot-pile and decoration groups that are not worth a map layer.
+EVENT_KINDS = {
+    "StaticHeliCrash":        ("Heli crash",      "\U0001f681", "#d2694a", "event"),
+    "StaticContaminatedArea": ("Toxic (dynamic)", "\u2623",     "#8fd633", "event"),
+    "StaticMilitaryConvoy":   ("Military convoy", "\U0001f69b", "#c98a4a", "event"),
+    "StaticPoliceSituation":  ("Police incident", "\U0001f693", "#6a86d6", "event"),
+    "StaticAirplaneCrate":    ("Airdrop crate",   "\U0001f4e6", "#c9b26a", "event"),
+    "StaticTrain":            ("Train",           "\U0001f686", "#9aa088", "event"),
+    "StaticPoliceCar":        ("Police car",      "\U0001f6a8", "#5c6fa8", "event"),
+    "StaticBonfire":          ("Bonfire",         "\U0001f525", "#c9773a", "event"),
+    "VehicleTruck01":         ("Truck",           "\U0001f69a", "#8fae6a", "vehicle"),
+    "VehicleOffroadHatchback":("Offroad hatch",   "\U0001f699", "#8fae6a", "vehicle"),
+    "VehicleOffroad02":       ("Offroad 4x4",     "\U0001f699", "#8fae6a", "vehicle"),
+    "VehicleSedan02":         ("Sedan",           "\U0001f697", "#8fae6a", "vehicle"),
+    "VehicleHatchback02":     ("Hatchback",       "\U0001f697", "#8fae6a", "vehicle"),
+    "VehicleCivilianSedan":   ("Civilian sedan",  "\U0001f697", "#8fae6a", "vehicle"),
+    "VehicleBoat":            ("Boat",            "\U0001f6a4", "#6aaed6", "vehicle"),
+}
+
+SPAWN_KINDS = {
+    "fresh":  ("Fresh spawn",  "\U0001f7e2", "#6ac46a"),
+    "hop":    ("Server hop",   "\U0001f535", "#6a9cd6"),
+    "travel": ("Travel spawn", "\U0001f7e1", "#d6c04a"),
+}
+
+
+def parse_events(spawns: bytes, events: bytes) -> list[dict]:
+    """cfgeventspawns.xml + db/events.xml -> candidate positions per event.
+
+    `nominal` is how many are live at once; the spawn file lists every position
+    one COULD occupy. Both matter: 3 heli crashes rotate among 95 sites, so a
+    marker means "sometimes here", never "here now". `active=0` groups are
+    disabled on this mission and are kept, clearly flagged, rather than dropped.
+    """
+    meta = {}
+    for e in ET.fromstring(events).findall("event"):
+        meta[e.get("name")] = (int(e.findtext("nominal") or 0),
+                               (e.findtext("active") or "0") == "1")
+    out = []
+    for e in ET.fromstring(spawns).findall("event"):
+        name = e.get("name")
+        if name not in EVENT_KINDS:
+            continue
+        label, glyph, colour, group = EVENT_KINDS[name]
+        pts = []
+        for p in e.findall("pos"):
+            try:
+                pts.append([round(float(p.get("x"))), round(float(p.get("z")))])
+            except (TypeError, ValueError):
+                continue
+        if not pts:
+            continue
+        nominal, active = meta.get(name, (0, False))
+        pts.sort()
+        out.append({"id": name, "label": label, "glyph": glyph, "colour": colour,
+                    "group": group, "nominal": nominal, "active": active,
+                    "points": pts})
+    out.sort(key=lambda e: (e["group"], e["label"]))
+    return out
+
+
+def parse_player_spawns(data: bytes) -> list[dict]:
+    """cfgplayerspawnpoints.xml -> fresh / hop / travel spawn positions."""
+    root = ET.fromstring(data)
+    out = []
+    for tag, (label, glyph, colour) in SPAWN_KINDS.items():
+        grp = root.find(tag)
+        if grp is None:
+            continue
+        pts = []
+        for p in grp.iter("pos"):
+            try:
+                pts.append([round(float(p.get("x"))), round(float(p.get("z")))])
+            except (TypeError, ValueError):
+                continue
+        if pts:
+            pts.sort()
+            out.append({"id": tag, "label": label, "glyph": glyph, "colour": colour,
+                        "points": pts})
+    return out
+
+
 def build_landmarks(names: list[str], rows: list[list[int]]) -> dict:
     pats = [(k, lbl, glyph, col, re.compile(rx, re.I)) for k, lbl, glyph, col, rx in LANDMARKS]
     kinds, pts = [], []
@@ -542,12 +653,19 @@ def cmd_build() -> int:
     write_json(OUT / "limits.json", limits)
     tier_px = render_tier_png(OUT / "tiers.png", area)
     print(f"  docs/data/tiers.png  {(OUT/'tiers.png').stat().st_size:,}b  ({tier_px}x{tier_px})")
+    uq = render_unique_png(OUT / "unique.png", area)
+    print(f"  docs/data/unique.png  {(OUT/'unique.png').stat().st_size:,}b  ({uq} cells)")
     zones = render_usage_pngs(OUT, area, limits["usage"])
     print(f"  docs/data/usage_*.png  {len(zones)} zone overlays")
     landmarks = build_landmarks(names, rows)
     write_json(OUT / "landmarks.json", landmarks)
     toxic = parse_effect_areas((ce / "cfgEffectArea.json").read_bytes())
     write_json(OUT / "toxic.json", toxic)
+    events = parse_events((ce / "cfgeventspawns.xml").read_bytes(),
+                          (ce / "db" / "events.xml").read_bytes())
+    write_json(OUT / "events.json", events)
+    pspawn = parse_player_spawns((ce / "cfgplayerspawnpoints.xml").read_bytes())
+    write_json(OUT / "spawns.json", pspawn)
     write_json(OUT / "recipes.json", recipes)
     write_json(OUT / "meta.json", {
         "map": "chernarusplus",
@@ -558,6 +676,8 @@ def cmd_build() -> int:
         "areaGrid": area[0],
         "zones": zones,
         "toxic": len(toxic),
+        "uniqueCells": uq,
+        "events": sum(len(e["points"]) for e in events),
         "tierResolved": True,
     })
 

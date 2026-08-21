@@ -250,8 +250,14 @@
   <div id="layPanel" hidden>
     <div class="lgrp"><b>Tier zones</b>
       <div class="filt" id="layTier"></div></div>
-    <div class="lgrp"><b>Usage zones</b>
+    <div class="lgrp"><b>Usage zones <span style="font-weight:400;text-transform:none">(terrain)</span></b>
       <div class="filt" id="layZone"></div></div>
+    <div class="lgrp"><b>Loot usage <span style="font-weight:400;text-transform:none">(buildings)</span></b>
+      <div class="filt" id="layBUse"></div></div>
+    <div class="lgrp"><b>Events &amp; vehicles</b>
+      <div class="filt" id="layEvent"></div></div>
+    <div class="lgrp"><b>Player spawns</b>
+      <div class="filt" id="laySpawn"></div></div>
     <div class="lgrp"><b>Hazards</b>
       <div class="filt" id="layHaz"></div></div>
     <div class="lgrp"><b>Landmarks</b>
@@ -280,7 +286,7 @@ const TOWNS = [
   ["Kabanino",4800,8200],["Pustoshka",3200,7000],
 ];
 
-let ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, MADE_BY;
+let ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS, MADE_BY;
 /* Catalog entries. Colour variants of one item (WaterproofBag_Green/Orange/…)
    share the same physical loot points, so they collapse into a single entry and
    are counted ONCE — summing them would multiply the same points by 3. Families
@@ -295,9 +301,9 @@ const picked = [];
 /* ---------- data ---------- */
 async function boot(){
   const j = async n => (await fetch(`data/${n}.json`)).json();
-  [ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC] =
+  [ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS] =
     await Promise.all(["items","groups","instances","recipes","meta","limits","landmarks",
-      "toxic"].map(j));
+      "toxic","events","spawns"].map(j));
   LIMITS.value.forEach((n,i) => TIERBIT[n] = 1 << i);
   buildEntries();
 
@@ -632,6 +638,13 @@ function buildLayerPanel(){
   toggleBtn($("#layTier"), "Tier 1–4", "#d7be3c",
     () => tierLayer.addTo(map), () => tierLayer.remove(), "tier");
 
+  /* Unique is orthogonal to Tier, not a fifth level, so it gets its own layer.
+     Five items: M79, Plastic_Explosive, RemoteDetonator spawn ONLY in these
+     zones; ClaymoreMine and Ammo_40mm_Explosive also accept Tier3/4. */
+  const uqLayer = overlay("data/unique.png", 0.55);
+  toggleBtn($("#layTier"), "Unique (explosives)", "#eb5adc",
+    () => uqLayer.addTo(map), () => uqLayer.remove(), "unique");
+
   for (const [name, z] of Object.entries(META.zones || {})){
     const lyr = overlay(`data/usage_${name}.png`, 0.5);
     toggleBtn($("#layZone"), name, `rgb(${z.rgb.join(",")})`,
@@ -654,6 +667,51 @@ function buildLayerPanel(){
   }
   toggleBtn($("#layHaz"), `\u2623 Toxic zones (${TOXIC.length})`, "#8fd633",
     () => haz.addTo(map), () => haz.remove(), "toxic");
+
+  /* Terrain usage zones and building usage are INDEPENDENT mechanisms, and
+     conflating them misleads. The SW military camp at ~(784,1888) has tents whose
+     prototype declares usage=Military, but the terrain there carries no usage
+     flag at all -- so the zone overlay shows nothing while military loot still
+     spawns. This layer plots buildings BY PROTOTYPE USAGE, which is what actually
+     determines what drops. */
+  const byUse = {};
+  for (const row of INST.rows)
+    for (const u of (GROUPS[INST.types[row[0]]] || {usg:[]}).usg)
+      (byUse[u] ||= []).push(row);
+
+  for (const [u, rows] of Object.entries(byUse).sort((a,b) => b[1].length - a[1].length)){
+    const col = (META.zones && META.zones[u]) ? `rgb(${META.zones[u].rgb.join(",")})` : "#9aa088";
+    const grp = L.layerGroup(rows.map(([, x, z]) =>
+      L.circleMarker([z,x], {radius:3, color:col, weight:1, opacity:.9,
+        fillColor:col, fillOpacity:.55, interactive:false})));
+    toggleBtn($("#layBUse"), `${u} (${rows.length})`, col,
+      () => grp.addTo(map), () => grp.remove(), "b"+u);
+  }
+
+  /* Event and vehicle sites. `nominal` of these are live at any moment, rotating
+     among all listed positions -- a marker means "sometimes here", not "here now". */
+  for (const e of EVENTS){
+    const grp = L.layerGroup(e.points.map(([x,z]) =>
+      L.marker([z,x], {icon:L.divIcon({className:"",
+        html:`<div class="mk"${e.active?"":' style="opacity:.45"'}>${e.glyph}</div>`,
+        iconSize:[15,15]})})
+      .bindPopup(`<b>${e.glyph} ${e.label}</b><br>
+        ${e.active ? `${e.nominal} live at once across ${e.points.length} sites`
+                   : `<span style="color:#d2694a">disabled on this mission</span>`}
+        <br><small>x ${x}, z ${z}</small>`)));
+    toggleBtn($("#layEvent"),
+      `${e.glyph} ${e.label} (${e.points.length})${e.active?"":" ✕"}`, e.colour,
+      () => grp.addTo(map), () => grp.remove(), e.id);
+  }
+
+  for (const sp of SPAWNS){
+    const grp = L.layerGroup(sp.points.map(([x,z]) =>
+      L.circleMarker([z,x], {radius:4, color:sp.colour, weight:2,
+        fillColor:sp.colour, fillOpacity:.4})
+      .bindPopup(`<b>${sp.label}</b><br><small>x ${x}, z ${z}</small>`)));
+    toggleBtn($("#laySpawn"), `${sp.label} (${sp.points.length})`, sp.colour,
+      () => grp.addTo(map), () => grp.remove(), sp.id);
+  }
 
   for (const k of LANDMARKS.kinds){
     if (!k.n) continue;
