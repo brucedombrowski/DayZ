@@ -427,11 +427,12 @@ let ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS
 let ENTRIES = [], ENTRY = {}, NAME2ENTRY = {};
 /* Bit order in areaflags.map is the declaration order in cfglimitsdefinition.xml. */
 let TIERBIT = {};
-let map, pinMarker = null, tierLayer = null, pos = null;
+let map, pinMarker = null, pos = null;
 const picked = [];
 
 /* ---------- data ---------- */
 async function boot(){
+  const t0 = performance.now();
   const j = async n => (await fetch(`data/${n}.json`)).json();
   [ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS, PLAYER,
    PROFILES, PLACES, ANIMALS, CARGO] =
@@ -459,6 +460,7 @@ async function boot(){
 
   initMap();
   $("#load").remove();
+  BOOT_MS = Math.round(performance.now() - t0);
 }
 
 /* ---------- catalog entries ---------- */
@@ -777,7 +779,7 @@ const SEARCH_ENTER = 20;             // approach, door, clear, leave
 let SEC_PER_SPOT = 5;                // walk to and check one loot spot
 let MIN_PER_KM = PACE.jog.minPerKm;
 let PACE_KEY = "jog", basePos = null, planLine = null, planMarks = null;
-let ARMED = null, baseMarker = null;
+let ARMED = null, baseMarker = null, BOOT_MS = 0;
 
 function arm(kind){
   ARMED = kind;
@@ -805,6 +807,7 @@ let FILL_ITEMS = new Set();
    because the planner asks "is this item wanted" tens of thousands of times. */
 function refreshFill(){
   _cargoMemo = new Map();          // want-set changed; cached cargo values are stale
+  _expMemo.clear();
   FILL_ITEMS = new Set();
   for (const p of PROFILES.profiles)
     if (fillOn.has(p.id)) p.items.forEach(n => FILL_ITEMS.add(n));
@@ -871,20 +874,22 @@ function wirePlanControls(){
     renderPlan();
   });
 
-  $("#tSpot").oninput = () => {
-    SEC_PER_SPOT = +$("#tSpot").value;
-    $("#tSpotV").textContent = SEC_PER_SPOT;
-    renderPlan();
+  /* Sliders fire on every pixel of drag. Update the readout immediately so the
+     control feels live, but coalesce the replan to one per frame-ish. */
+  let planTimer = 0;
+  const replan = () => {
+    clearTimeout(planTimer);
+    planTimer = setTimeout(renderPlan, 90);
   };
-
-  $("#tPace").oninput = () => {
-    MIN_PER_KM = +$("#tPace").value;
-    $("#tPaceV").textContent = MIN_PER_KM.toFixed(1);
-    renderPlan();
-  };
-
   for (const [inp, out] of [["#tBudget","#tBudgetV"], ["#tSlots","#tSlotsV"]])
-    $(inp).oninput = () => { $(out).textContent = $(inp).value; renderPlan(); };
+    $(inp).oninput = () => { $(out).textContent = $(inp).value; replan(); };
+  $("#tSpot").oninput = () => {
+    SEC_PER_SPOT = +$("#tSpot").value; $("#tSpotV").textContent = SEC_PER_SPOT; replan();
+  };
+  $("#tPace").oninput = () => {
+    MIN_PER_KM = +$("#tPace").value; $("#tPaceV").textContent = MIN_PER_KM.toFixed(1);
+    replan();
+  };
 }
 
 /* Total nominal competing for one container slot, memoised. Recomputing this per
@@ -936,8 +941,26 @@ function itemValue(name, isWanted, wantKey, matchName){
 /* Expected count of a set of items in one building.
 
    eff (not raw points) is how many slots actually hold loot; share is the item's
-   nominal over everything competing for that slot. */
+   nominal over everything competing for that slot.
+
+   MEMOISED on (want-set, building type, tier flags) -- deliberately not on the
+   building itself. The item scan does not depend on WHERE a building stands, only
+   on what kind it is and which tier it sits in, and 11,360 buildings collapse to
+   922 such combinations. Without this the scan runs 11,360 times per plan and
+   took 835 ms, on every drag of every slider. */
+const _expMemo = new Map();
+
 function expectedFor(row, match){
+  const [ti, , , tierFlags] = row;
+  const memoKey = (match._key || "?") + "|" + ti + "|" + tierFlags;
+  const hit = _expMemo.get(memoKey);
+  if (hit !== undefined) return hit;
+  const val = _expectedForUncached(row, match);
+  _expMemo.set(memoKey, val);
+  return val;
+}
+
+function _expectedForUncached(row, match){
   const [ti, , , tierFlags] = row;
   const type = INST.types[ti], g = GROUPS[type];
   if (!g) return 0;
@@ -1410,16 +1433,28 @@ function overlay(url, opacity){
    the pressed look consistent, themeable, and (per WCAG 1.4.1) marked with a check
    glyph rather than colour alone. `swatch` is a data encoding -- the colour that
    layer actually draws with -- so it stays a border, never the state indicator. */
-function toggleBtn(host, label, swatch, onOn, onOff, id){
+/* A layer toggle. `make` is called ONCE, on first activation, and must return a
+   Leaflet layer.
+
+   Building every layer at boot meant ~32,000 Leaflet objects -- 4,022 wildlife
+   circles, 1,858 landmarks, 1,106 events and a circleMarker per building per
+   usage -- all constructed before anything was visible. Almost none are ever
+   switched on in a session. Deferring construction to first use is the whole
+   difference between a slow start and an instant one. */
+function toggleBtn(host, label, swatch, make, id){
   const b = document.createElement("button");
   b.textContent = label;
   if (id) b.dataset.lid = id;
   b.setAttribute("aria-pressed", "false");
   if (swatch) b.style.borderLeftColor = swatch, b.style.borderLeftWidth = "3px";
+  let layer = null;
   b._set = on => {
     if ((b.getAttribute("aria-pressed") === "true") === on) return;
     b.setAttribute("aria-pressed", String(on));
-    on ? onOn() : onOff();
+    if (on){
+      if (!layer) layer = make();
+      layer.addTo(map);
+    } else if (layer) layer.remove();
   };
   b.onclick = () => { b._set(b.getAttribute("aria-pressed") !== "true"); writeHash(); };
   host.appendChild(b);
@@ -1462,39 +1497,36 @@ function buildLayerPanel(){
     $("#layToggle").textContent = open ? "Layers ▾" : "Layers ▴";
   };
 
-  tierLayer = overlay("data/tiers.png", 0.42);
   toggleBtn($("#layTier"), "Tier 1–4", tok("tier2"),
-    () => tierLayer.addTo(map), () => tierLayer.remove(), "tier");
+    () => overlay("data/tiers.png", 0.42), "tier");
 
   /* Unique is orthogonal to Tier, not a fifth level, so it gets its own layer.
      Five items: M79, Plastic_Explosive, RemoteDetonator spawn ONLY in these
      zones; ClaymoreMine and Ammo_40mm_Explosive also accept Tier3/4. */
-  const uqLayer = overlay("data/unique.png", 0.55);
   toggleBtn($("#layTier"), "Unique (explosives)", tok("unique"),
-    () => uqLayer.addTo(map), () => uqLayer.remove(), "unique");
+    () => overlay("data/unique.png", 0.55), "unique");
 
-  for (const [name, z] of Object.entries(META.zones || {})){
-    const lyr = overlay(`data/usage_${name}.png`, 0.5);
+  for (const [name, z] of Object.entries(META.zones || {}))
     toggleBtn($("#layZone"), name, `rgb(${z.rgb.join(",")})`,
-      () => lyr.addTo(map), () => lyr.remove(), name);
-  }
+      () => overlay(`data/usage_${name}.png`, 0.5), name);
 
   /* Permanent contaminated zones, drawn at their true radius from
      cfgEffectArea.json rather than approximated from the areaflags raster.
      Inner circle = the trigger; outer ring = radius + OuterOffset, where the gas
      particles reach. */
-  const haz = L.layerGroup();
-  for (const t of TOXIC){
-    L.circle([t.z,t.x], {radius:t.outer, color:tok("ok"), weight:1, opacity:.5,
-      fillColor:tok("ok"), fillOpacity:.10, interactive:false}).addTo(haz);
-    L.circle([t.z,t.x], {radius:t.r, color:tok("ok"), weight:1.5,
-      fillColor:tok("ok"), fillOpacity:.22})
-      .bindPopup(`<b>☣ ${t.name}</b><br>Permanent contaminated zone<br>
-        radius ${t.r} m (gas to ${t.outer} m)<br><small>x ${t.x}, z ${t.z}</small>`)
-      .addTo(haz);
-  }
-  toggleBtn($("#layHaz"), `\u2623 Toxic zones (${TOXIC.length})`, tok("ok"),
-    () => haz.addTo(map), () => haz.remove(), "toxic");
+  toggleBtn($("#layHaz"), `\u2623 Toxic zones (${TOXIC.length})`, tok("ok"), () => {
+    const haz = L.layerGroup();
+    for (const t of TOXIC){
+      L.circle([t.z,t.x], {radius:t.outer, color:tok("ok"), weight:1, opacity:.5,
+        fillColor:tok("ok"), fillOpacity:.10, interactive:false}).addTo(haz);
+      L.circle([t.z,t.x], {radius:t.r, color:tok("ok"), weight:1.5,
+        fillColor:tok("ok"), fillOpacity:.22})
+        .bindPopup(`<b>☣ ${t.name}</b><br>Permanent contaminated zone<br>
+          radius ${t.r} m (gas to ${t.outer} m)<br><small>x ${t.x}, z ${t.z}</small>`)
+        .addTo(haz);
+    }
+    return haz;
+  }, "toxic");
 
   /* Terrain usage zones and building usage are INDEPENDENT mechanisms, and
      conflating them misleads. The SW military camp at ~(784,1888) has tents whose
@@ -1510,17 +1542,16 @@ function buildLayerPanel(){
   for (const [u, rows] of Object.entries(byUse).sort((a,b) => b[1].length - a[1].length)){
     const col = (META.zones && META.zones[u]) ? `rgb(${META.zones[u].rgb.join(",")})`
                                               : tok("text-muted");
-    const grp = L.layerGroup(rows.map(([, x, z]) =>
-      L.circleMarker([z,x], {radius:3, color:col, weight:1, opacity:.9,
-        fillColor:col, fillOpacity:.55, interactive:false})));
     toggleBtn($("#layBUse"), `${u} (${rows.length})`, col,
-      () => grp.addTo(map), () => grp.remove(), "b"+u);
+      () => L.layerGroup(rows.map(([, x, z]) =>
+        L.circleMarker([z,x], {radius:3, color:col, weight:1, opacity:.9,
+          fillColor:col, fillOpacity:.55, interactive:false}))), "b"+u);
   }
 
   /* Event and vehicle sites. `nominal` of these are live at any moment, rotating
      among all listed positions -- a marker means "sometimes here", not "here now". */
   for (const e of EVENTS){
-    const grp = L.layerGroup(e.points.map(([x,z]) =>
+    const mk = () => L.layerGroup(e.points.map(([x,z]) =>
       L.marker([z,x], {icon:L.divIcon({className:"",
         html:`<div class="mk"${e.active?"":' style="opacity:.45"'}>${e.glyph}</div>`,
         iconSize:[15,15]})})
@@ -1530,43 +1561,40 @@ function buildLayerPanel(){
         <br><small>x ${x}, z ${z}</small>`)));
     toggleBtn($("#layEvent"),
       `${e.glyph} ${e.label} (${e.points.length})${e.active?"":" ✕"}`, e.colour,
-      () => grp.addTo(map), () => grp.remove(), e.id);
+      mk, e.id);
   }
 
-  for (const sp of SPAWNS){
-    const grp = L.layerGroup(sp.points.map(([x,z]) =>
-      L.circleMarker([z,x], {radius:4, color:sp.colour, weight:2,
-        fillColor:sp.colour, fillOpacity:.4})
-      .bindPopup(`<b>${sp.label}</b><br><small>x ${x}, z ${z}</small>`)));
+  for (const sp of SPAWNS)
     toggleBtn($("#laySpawn"), `${sp.label} (${sp.points.length})`, sp.colour,
-      () => grp.addTo(map), () => grp.remove(), sp.id);
-  }
+      () => L.layerGroup(sp.points.map(([x,z]) =>
+        L.circleMarker([z,x], {radius:4, color:sp.colour, weight:2,
+          fillColor:sp.colour, fillOpacity:.4})
+        .bindPopup(`<b>${sp.label}</b><br><small>x ${x}, z ${z}</small>`))), sp.id);
 
   /* Wildlife territories. Wolves, bears and infected change how you route; deer
      and boar are why you might route somewhere. HuntingGround is the roaming zone
      and the only one worth drawing -- Water and Rest are small and incidental. */
   for (const a of ANIMALS){
     const col = tok(a.tone);
-    const grp = L.layerGroup(a.zones
-      .filter(z => z[3] === "HuntingGround" || a.zones.length < 200)
-      .map(([x,z,r,kind]) => L.circle([z,x], {radius:r, color:col, weight:1,
-        opacity:.55, fillColor:col, fillOpacity:.10})
-        .bindPopup(`<b>${a.glyph} ${a.label}</b><br>${kind}<br>
-          <small>x ${x}, z ${z} · r ${r} m</small>`)));
     toggleBtn($("#layWild"),
       `${a.glyph} ${a.label}${a.hazard ? " ⚠" : ""} (${a.zones.length})`, col,
-      () => grp.addTo(map), () => grp.remove(), "w"+a.id);
+      () => L.layerGroup(a.zones
+        .filter(z => z[3] === "HuntingGround" || a.zones.length < 200)
+        .map(([x,z,r,kind]) => L.circle([z,x], {radius:r, color:col, weight:1,
+          opacity:.55, fillColor:col, fillOpacity:.10})
+          .bindPopup(`<b>${a.glyph} ${a.label}</b><br>${kind}<br>
+            <small>x ${x}, z ${z} · r ${r} m</small>`))), "w"+a.id);
   }
 
-  for (const k of LANDMARKS.kinds){
-    if (!k.n) continue;
-    const grp = L.layerGroup(
-      LANDMARKS.points.filter(p => LANDMARKS.kinds[p[0]] === k)
-        .map(([, x, z]) => L.marker([z,x], {interactive:false, icon:L.divIcon({
-          className:"", html:`<div class="mk">${k.glyph}</div>`, iconSize:[14,14]})})));
-    toggleBtn($("#layMark"), `${k.glyph} ${k.label} (${k.n})`, k.colour,
-      () => grp.addTo(map), () => grp.remove(), k.id);
-  }
+  LANDMARKS.kinds.forEach((k, ki) => {
+    if (!k.n) return;
+    toggleBtn($("#layMark"), `${k.glyph} ${k.label} (${k.n})`, tok(k.tone || "info"),
+      () => L.layerGroup(
+        LANDMARKS.points.filter(p => p[0] === ki)
+          .map(([, x, z]) => L.marker([z,x], {interactive:false, icon:L.divIcon({
+            className:"", html:`<div class="mk">${k.glyph}</div>`, iconSize:[14,14]})}))),
+      k.id);
+  });
 }
 
 /* #v=x,z,zoom&l=tier,Military,church — shareable view state, and how the
@@ -1594,7 +1622,14 @@ function selfTest(){
       if (d > worst){ worst = d; sample = `${INST.types[r[0]]}@${r[1]},${r[2]}`; }
       n++;
     }
-    document.title = `SELFTEST n=${n} maxErr=${worst.toFixed(3)}px ${worst<0.5?"PASS":"FAIL "+sample}`;
+    const t1 = performance.now();
+    const pl = plans();
+    candidates(pl, pos || {x:7680, z:7680});
+    const planMs = Math.round(performance.now() - t1);
+    const layers = document.querySelectorAll("#layPanel button[data-lid]").length;
+    document.title = `SELFTEST n=${n} maxErr=${worst.toFixed(3)}px `
+      + `${worst<0.5?"PASS":"FAIL "+sample} boot=${BOOT_MS}ms plan=${planMs}ms `
+      + `layers=${layers}`;
   }, 700);
 }
 
@@ -1727,6 +1762,8 @@ function render(){
   });
 }
 
+function invalidatePlanCache(){ _expMemo.clear(); _cargoMemo = new Map(); }
+
 function renderChips(){
   $("#chips").innerHTML = picked.map(k => {
     const e = ENTRY[k];
@@ -1736,7 +1773,7 @@ function renderChips(){
       <button data-k="${k}" title="remove">×</button></span>`;
   }).join("");
   $("#chips").querySelectorAll("button").forEach(b => b.onclick = () => {
-    picked.splice(picked.indexOf(b.dataset.k),1); render();
+    picked.splice(picked.indexOf(b.dataset.k),1); invalidatePlanCache(); render();
   });
 }
 
@@ -1788,7 +1825,7 @@ function renderCatalog(){
   $("#catout").querySelectorAll("li").forEach(li => li.onclick = () => {
     const k = li.dataset.k;
     picked.includes(k) ? picked.splice(picked.indexOf(k),1) : picked.push(k);
-    renderCatalog(); render();
+    invalidatePlanCache(); renderCatalog(); render();
   });
 }
 
@@ -1896,7 +1933,8 @@ boot().then(() => {
   autocomplete("#q","#acl",
     {names:()=>ENTRIES, text:e=>e.label + (e.variants.length?` (${e.variants.length})`:""),
      label:e=>e.it.cat||""},
-    e => { if (!picked.includes(e.key)) picked.push(e.key); render(); });
+    e => { if (!picked.includes(e.key)) picked.push(e.key);
+           invalidatePlanCache(); render(); });
 
   $("#fsort").innerHTML = Object.entries(SORTS).map(([k,v]) =>
     `<button data-s="${k}" aria-pressed="${k===SORT}">${v.label}</button>`).join("");
