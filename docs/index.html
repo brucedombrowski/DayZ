@@ -137,6 +137,20 @@
   .cat .meta{font-size:11px;color:var(--dim);text-align:right;white-space:nowrap}
   .cat .t{color:var(--accent)}
 
+  /* ---- building loot ---- */
+  .cont{margin:12px 0 0;padding:9px 10px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:5px}
+  .cont h4{margin:0 0 2px;font-size:12.5px}
+  .cont .sub{font-size:11px;color:var(--dim);margin-bottom:6px}
+  .lt{list-style:none;margin:0;padding:0;font-size:12.5px}
+  .lt li{display:flex;justify-content:space-between;gap:8px;padding:2px 0;cursor:pointer}
+  .lt li:hover{color:var(--accent)}
+  .lt .pc{color:var(--accent);font-variant-numeric:tabular-nums;flex-shrink:0}
+  .lt .pc.lo{color:var(--dim)}
+  .more{background:none;border:0;color:var(--accent);font:inherit;font-size:11.5px;
+    cursor:pointer;padding:4px 0 0}
+  .more:hover{text-decoration:underline}
+
   /* ---- map ---- */
   #map{flex:1;height:100%;background:#0c0e0a}
   .leaflet-container{background:#0c0e0a;font-family:inherit}
@@ -193,6 +207,7 @@
     <div class="tabs" role="tablist">
       <button role="tab" id="tab-loot" aria-selected="true" aria-controls="pane-loot">Loot map</button>
       <button role="tab" id="tab-cat" aria-selected="false" aria-controls="pane-cat">Catalog</button>
+      <button role="tab" id="tab-bld" aria-selected="false" aria-controls="pane-bld">Building</button>
       <button role="tab" id="tab-craft" aria-selected="false" aria-controls="pane-craft">Crafting</button>
     </div>
 
@@ -227,6 +242,11 @@
       <label class="fld">Tier</label><div class="filt" id="ftier"></div>
       <label class="fld">Where it spawns</label><div class="filt" id="fusg"></div>
       <div id="catout"></div>
+    </div>
+
+    <div class="pane" id="pane-bld" role="tabpanel">
+      <p class="muted">Click any building on the map to see everything that can
+      spawn inside it, gated by the tier it actually stands in.</p>
     </div>
 
     <div class="pane" id="pane-craft" role="tabpanel">
@@ -466,6 +486,134 @@ function search(pl){
   return out.sort(SORTS[pos ? SORT : "most"].fn).slice(0, 25);
 }
 
+/* ---------- reverse loot lookup ---------- */
+
+/* Coarse grid index so a map click can find the nearest building without
+   scanning all 11,360 rows. */
+const GRID = 250;
+let BIDX = null;
+function buildIndex(){
+  BIDX = new Map();
+  for (const row of INST.rows){
+    const k = ((row[1]/GRID)|0) + "," + ((row[2]/GRID)|0);
+    (BIDX.get(k) || BIDX.set(k, []).get(k)).push(row);
+  }
+}
+
+function nearestBuilding(x, z, maxD){
+  if (!BIDX) buildIndex();
+  const cx = (x/GRID)|0, cz = (z/GRID)|0;
+  const reach = Math.ceil(maxD/GRID);
+  let best = null, bd = maxD;
+  for (let i = cx-reach; i <= cx+reach; i++)
+    for (let j = cz-reach; j <= cz+reach; j++)
+      for (const row of (BIDX.get(i+","+j) || [])){
+        const d = Math.hypot(row[1]-x, row[2]-z);
+        if (d < bd){ bd = d; best = row; }
+      }
+  return best;
+}
+
+/* Everything that can spawn in one building instance.
+
+   The tier gate uses the flags of the instance, not the type: two identical
+   sheds in Tier 1 and Tier 4 hold different loot, which is the whole point of
+   doing this per-building rather than per-blueprint.
+
+   The share figure is nominal-weighted: within a container slot, an item's odds
+   are roughly its `nominal` over the total `nominal` of everything eligible for
+   that slot. That is a first-order estimate -- the real CLE weights by how far
+   below target each item currently is -- but it ranks correctly and gives a
+   sense of scale. */
+function buildingLoot(typeName, tierFlags){
+  const g = GROUPS[typeName];
+  if (!g) return [];
+  return g.cont.map(c => {
+    const seen = new Set(), items = [];
+    let total = 0;
+    for (const [name, it] of Object.entries(ITEMS)){
+      if (!it.nom || !it.cat) continue;                 // never spawns as loot
+      if (!c.cat.includes(it.cat)) continue;
+      if (it.tag.length && !it.tag.some(t => c.tag.includes(t))) continue;
+      if (it.usg.length && !it.usg.some(u => g.usg.includes(u))) continue;
+      const mask = it.tier.reduce((a,t) => a | (TIERBIT[t]||0), 0);
+      if (mask && !(tierFlags & mask)) continue;
+
+      const key = NAME2ENTRY[name] || name;             // collapse colour variants
+      total += it.nom;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push({key, label:(ENTRY[key]||{label:name}).label, nom:it.nom});
+    }
+    items.sort((a,b) => b.nom - a.nom || a.label.localeCompare(b.label));
+    return {c, items, total};
+  }).filter(x => x.items.length);
+}
+
+let bldMarker = null;
+
+function showBuilding(row){
+  const [ti, x, z, tierFlags] = row;
+  if (bldMarker) bldMarker.remove();
+  bldMarker = L.circleMarker([z,x], {radius:8, color:"#e6e8dd", weight:2,
+    fillColor:"#b8c94a", fillOpacity:.35}).addTo(map);
+  const type = INST.types[ti];
+  const tiers = LIMITS.value.filter((_,i) => tierFlags & (1<<i));
+  const conts = buildingLoot(type, tierFlags);
+  const pts = conts.reduce((a,c) => a + c.c.n, 0);
+
+  $("#pane-bld").innerHTML = `
+    <label class="fld">${human(type.replace(/^Land_/,""))}</label>
+    <div class="cls" style="font-family:ui-monospace,Menlo,monospace;font-size:11px;
+      color:var(--dim)">${type}</div>
+    <p class="muted" style="margin:6px 0 0">
+      x ${x}, z ${z} · <span style="color:var(--accent)">${tiers.join(", ")||"no tier"}</span>
+      · ${pts} loot point${pts===1?"":"s"} in ${conts.length} container${conts.length===1?"":"s"}
+      · usage ${(GROUPS[type]||{usg:[]}).usg.join(", ")||"—"}
+    </p>
+    <p class="muted" style="margin:6px 0 0">
+      <a href="#" id="bldHere" style="color:var(--accent)">Set my position here</a> ·
+      <a href="https://www.izurvive.com/chernarus/#location=${x};${z};7" target="_blank"
+         rel="noopener noreferrer" style="color:var(--accent)">iZurvive ↗</a>
+    </p>` +
+    (conts.length ? conts.map((cc,ci) => `
+      <div class="cont">
+        <h4>${cc.c.tag.join(" / ") || "any placement"} — ${cc.c.n} slot${cc.c.n===1?"":"s"}</h4>
+        <div class="sub">${cc.c.cat.join(", ")} · ${cc.items.length} possible items</div>
+        <ul class="lt" data-c="${ci}">${lootRows(cc, 12)}</ul>
+        ${cc.items.length > 12
+          ? `<button class="more" data-c="${ci}">Show all ${cc.items.length}</button>` : ""}
+      </div>`).join("")
+      : `<p class="muted" style="margin-top:12px">Nothing can spawn here at this
+         tier — the containers exist but no item qualifies.</p>`);
+
+  $("#bldHere").onclick = ev => { ev.preventDefault(); setPos(x, z); };
+  wireLoot(conts);
+  tab("bld");
+}
+
+function lootRows(cc, limit){
+  return cc.items.slice(0, limit).map(it => {
+    const pc = cc.total ? 100*it.nom/cc.total : 0;
+    return `<li data-k="${it.key}"><span>${it.label}</span>
+      <span class="pc${pc<1?" lo":""}">${pc < 0.1 ? "<0.1" : pc.toFixed(1)}%</span></li>`;
+  }).join("");
+}
+
+function wireLoot(conts){
+  $("#pane-bld").querySelectorAll("button.more").forEach(b => b.onclick = () => {
+    const ci = +b.dataset.c;
+    $(`#pane-bld ul.lt[data-c="${ci}"]`).innerHTML = lootRows(conts[ci], 1e9);
+    b.remove();
+    wireLoot(conts);
+  });
+  $("#pane-bld").querySelectorAll("ul.lt li").forEach(li => li.onclick = () => {
+    const k = li.dataset.k;
+    if (ENTRY[k] && !picked.includes(k)) picked.push(k);
+    tab("loot"); render();
+  });
+}
+
 /* ---------- map ---------- */
 /* The base map IS the data: 11,360 building positions. Towns, roads and the
    coastline emerge from where DayZ actually put buildings, so we need no
@@ -596,7 +744,15 @@ function initMap(){
   map.on("mousemove", e => {
     $("#hud").textContent = `x ${Math.round(e.latlng.lng)}  z ${Math.round(e.latlng.lat)}`;
   });
-  map.on("click", e => setPos(Math.round(e.latlng.lng), Math.round(e.latlng.lat)));
+  /* Click near a building inspects it; click on open ground sets your position.
+     The threshold is in metres derived from pixels, so it stays a constant
+     ~14px target at any zoom. */
+  map.on("click", e => {
+    const x = Math.round(e.latlng.lng), z = Math.round(e.latlng.lat);
+    const mPerPx = 1 / Math.pow(2, map.getZoom());
+    const hit = nearestBuilding(x, z, Math.max(6, 14 * mPerPx));
+    hit ? showBuilding(hit) : setPos(x, z);
+  });
 }
 
 /* ---------- layers ----------
@@ -766,6 +922,12 @@ function applyHash(){
   const q = new URLSearchParams(location.hash.slice(1));
   const v = (q.get("v")||"").split(",").map(Number);
   if (v.length === 3 && v.every(Number.isFinite)) map.setView([v[1], v[0]], v[2]);
+  const b = (q.get("b")||"").split(",").map(Number);
+  if (b.length === 2 && b.every(Number.isFinite))
+    requestAnimationFrame(() => {
+      const hit = nearestBuilding(b[0], b[1], 120);
+      if (hit) showBuilding(hit);
+    });
   const want = new Set((q.get("l")||"").split(",").filter(Boolean));
   if (want.size) requestAnimationFrame(() =>
     document.querySelectorAll("#layPanel button").forEach(b => {
@@ -992,13 +1154,14 @@ function showCraft(item){
 
 /* ---------- tabs ---------- */
 function tab(which){
-  for (const t of ["loot","cat","craft"]){
+  for (const t of ["loot","cat","bld","craft"]){
     $("#tab-"+t).setAttribute("aria-selected", String(t === which));
     $("#pane-"+t).toggleAttribute("data-active", t === which);
   }
 }
 $("#tab-loot").onclick = () => tab("loot");
 $("#tab-cat").onclick = () => tab("cat");
+$("#tab-bld").onclick = () => tab("bld");
 $("#tab-craft").onclick = () => tab("craft");
 
 for (const id of ["#px","#pz"]) $(id).onchange = () => {

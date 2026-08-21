@@ -94,6 +94,62 @@ check("Chernogorsk tier-gated", cell_points(21, 8, True), 13)
 check("Zelenogorsk ungated", cell_points(8, 17, False), 356)
 check("Zelenogorsk tier-gated", cell_points(8, 17, True), 356)
 
+# --- reverse loot lookup ---------------------------------------------------
+# Mirrors buildingLoot() in docs/index.html. The tier gate uses the flags of the
+# INSTANCE, so the same shed holds different loot in Tier 1 and Tier 3 -- that
+# difference is the whole reason the lookup is per-building.
+def building_loot(type_name, tier_flags):
+    g = groups.get(type_name)
+    if not g:
+        return []
+    out = []
+    for c in g["cont"]:
+        got = []
+        for name, it in items.items():
+            if not it["nom"] or not it["cat"]:
+                continue
+            if it["cat"] not in c["cat"]:
+                continue
+            if it["tag"] and not any(t in c["tag"] for t in it["tag"]):
+                continue
+            if it["usg"] and not any(u in g["usg"] for u in it["usg"]):
+                continue
+            mask = sum(TIER[t] for t in it["tier"] if t in TIER)
+            if mask and not (tier_flags & mask):
+                continue
+            got.append(name)
+        if got:
+            out.append(got)
+    return out
+
+t1 = [n for c in building_loot("Land_Shed_M1", TIER["Tier1"]) for n in c]
+t3 = [n for c in building_loot("Land_Shed_M1", TIER["Tier3"]) for n in c]
+check("Shed_M1 Tier1 item count", len(t1), 56)
+check("Shed_M1 Tier1 excludes SledgeHammer", "SledgeHammer" in t1, False)
+check("Shed_M1 Tier3 includes SledgeHammer", "SledgeHammer" in t3, True)
+# A higher tier is NOT a superset: some items are deliberately low-tier only, so
+# walking north genuinely costs you access to them. Sickle is Tier1/Tier2.
+check("Sickle is low-tier only", items["Sickle"]["tier"], ["Tier1", "Tier2"])
+check("Sickle in Tier1 shed", "Sickle" in t1, True)
+check("Sickle absent from Tier3 shed", "Sickle" in t3, False)
+
+# Unique gating. Plastic_Explosive is category `explosives`, RemoteDetonator is
+# `tools`, so they need containers of different kinds -- pick accordingly.
+def gated_by_unique(item, need_cat):
+    b = next((b for b, g in groups.items()
+              if "Industrial" in g["usg"]
+              and any(need_cat in c["cat"] for c in g["cont"])), None)
+    if not b:
+        return None
+    without = [n for c in building_loot(b, TIER["Tier3"]) for n in c]
+    withuq = [n for c in building_loot(b, TIER["Tier3"] | TIER["Unique"]) for n in c]
+    return (item in without, item in withuq)
+
+check("Plastic_Explosive gated by Unique",
+      gated_by_unique("Plastic_Explosive", "explosives"), (False, True))
+check("RemoteDetonator gated by Unique",
+      gated_by_unique("RemoteDetonator", "tools"), (False, True))
+
 # --- crafting graph ----------------------------------------------------------
 made_by = {}
 for r in recipes:
