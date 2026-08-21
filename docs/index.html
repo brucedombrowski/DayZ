@@ -213,7 +213,8 @@
         <ul id="cacl" hidden role="listbox"></ul>
       </div>
       <div id="cout"><p class="muted" style="margin-top:12px">
-        Pick an item to see its recipe tree. Leaves marked
+        Search is limited to the <b>133 items a recipe can actually produce</b> —
+        everything else in DayZ is loot-only. Leaves marked
         <span style="color:var(--accent)">LOOT</span> can be sent straight to the map.
       </p></div>
     </div>
@@ -719,11 +720,17 @@ boot().then(() => {
   chipRow("#fusg", LIMITS.usage, "usg");
   $("#fq").oninput = renderCatalog;
   renderCatalog();
-  const craftPool = [...new Set([...MADE_BY.keys(), ...Object.keys(ITEMS)])]
-    .map(n => ({key:n, label:human(n), it:ITEMS[n]||{}, variants:[], norm:norm(n+human(n))}));
+  /* Only things that are actually produced by a recipe. Searching all 1,970 items
+     here meant "what do you want to make?" mostly answered with loot that cannot be
+     made at all. 122 craftable + 11 salvage-only = 133. */
+  const craftPool = [...MADE_BY.keys()].map(n => ({
+    key:n, label:human(n), it:ITEMS[n]||{}, variants:[], norm:norm(n+human(n)),
+    craftable: MADE_BY.get(n).some(r => r.kind === "craft"),
+  })).sort((a,b) => a.label.localeCompare(b.label));
+
   autocomplete("#cq","#cacl",
     {names:()=>craftPool, text:e=>e.label,
-     label:e=>MADE_BY.has(e.key)?"craftable":""},
+     label:e=>e.craftable ? "" : "salvage only"},
     e => showCraft(e.key));
   render();
 }).catch(e => { $("#load").textContent = "failed to load: " + e.message; });
