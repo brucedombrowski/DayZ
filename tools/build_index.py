@@ -346,6 +346,122 @@ def render_tier_png(path: Path, area, down: int = 4) -> int:
     return n
 
 
+# Usage zones worth drawing, with a distinct colour each. Town (bit 7) is absent
+# from the Chernarus area map entirely and Village covers 156 cells, so both come
+# from the building prototype rather than the terrain -- not rendered.
+USAGE_COLOUR = {
+    "Military":         (200,  70,  60),
+    "Industrial":       (150, 130, 200),
+    "Coast":            ( 70, 150, 200),
+    "Hunting":          (110, 175,  90),
+    "Farm":             (200, 170,  70),
+    "Medic":            (230, 120, 160),
+    "Police":           ( 80, 110, 210),
+    "Firefighter":      (225, 145,  60),
+    "ContaminatedArea": (140, 200,  60),
+    "Historical":       (170, 150, 120),
+    "Lunapark":         (220, 100, 200),
+}
+
+
+def render_usage_pngs(outdir: Path, area, usage_names: list[str], down: int = 4) -> dict:
+    """One RGBA overlay per usage zone, from the areaflags usage plane."""
+    grid, usage, _value = area
+    n = grid // down
+    made = {}
+    for name, (r, g, b) in sorted(USAGE_COLOUR.items()):
+        if name not in usage_names:
+            continue
+        bit = 1 << usage_names.index(name)
+        px = bytearray(n * n * 4)
+        hit = 0
+        for oy in range(n):
+            z0 = (n - 1 - oy) * down           # image top = north
+            for ox in range(n):
+                found = False
+                for rr in range(z0, z0 + down):
+                    base = (rr * grid + ox * down) * 4
+                    for cc in range(down):
+                        o = base + cc * 4
+                        if int.from_bytes(usage[o:o+4], "little") & bit:
+                            found = True
+                            break
+                    if found:
+                        break
+                if found:
+                    i = (oy * n + ox) * 4
+                    px[i:i+4] = bytes((r, g, b, 165))
+                    hit += 1
+        if hit:
+            write_png(outdir / f"usage_{name}.png", n, n, px)
+            made[name] = {"rgb": [r, g, b], "cells": hit}
+    return made
+
+
+# Landmarks, derived from building class names -- the only place the data says
+# what a building actually IS. Order matters: first match wins, so specific
+# patterns (Mil_FireStation) must precede general ones (Mil_).
+LANDMARKS = [
+    ("church",      "Church",        "\u26ea", "#c9b26a", r"Church|Chapel"),
+    ("firestation", "Fire station",  "\U0001f692", "#e08a3c", r"FireStation"),
+    ("hospital",    "Hospital",      "\u2695",  "#e07a9a", r"City_Hospital"),
+    ("police",      "Police",        "\U0001f6a8", "#6a86d6", r"PoliceStation"),
+    ("school",      "School",        "\U0001f393", "#9a8ad6", r"City_School"),
+    ("prison",      "Prison",        "\U0001f512", "#9aa088", r"Prison"),
+    ("hangar",      "Hangar",        "\u2708",  "#8ab4d0", r"Hangar"),
+    ("fuel",        "Fuel station",  "\u26fd", "#d6b44a", r"FuelStation"),
+    ("factory",     "Factory",       "\U0001f3ed", "#a98ad6", r"Factory"),
+    ("military",    "Military",      "\u2b50", "#d2694a", r"^Land_Mil_|Barracks|Airfield"),
+    ("medtent",     "Medical tent",  "\u2695",  "#e07a9a", r"Medical_Tent"),
+    ("deerstand",   "Deer stand",    "\U0001f98c", "#8fae6a", r"DeerStand"),
+    ("barn",        "Barn",          "\U0001f33e", "#c2a15a", r"Barn"),
+    ("boat",        "Boat / dock",   "\u26f5", "#6aaed6", r"Boat_Small|Boathouse"),
+    ("watchtower",  "Watchtower",    "\U0001f5fc", "#a0a888", r"Tower_TC|GuardTower|Watchtower"),
+]
+
+
+def parse_effect_areas(data: bytes) -> list[dict]:
+    """cfgEffectArea.json -> permanent contaminated zones with exact centre+radius.
+
+    Preferred over the ContaminatedArea bit in areaflags: this is the authoritative
+    trigger definition, so we can draw the true radius instead of a 3.75m raster
+    approximation. Pos is [x, y, z] with y = altitude.
+    """
+    out = []
+    for a in json.loads(data).get("Areas", []):
+        d = a.get("Data", {})
+        pos = d.get("Pos")
+        if not pos or len(pos) != 3:
+            continue
+        out.append({
+            "name": a.get("AreaName", "?"),
+            "type": a.get("Type", ""),
+            "x": round(pos[0]), "z": round(pos[2]),
+            "r": round(d.get("Radius", 0)),
+            "outer": round(d.get("Radius", 0)) + round(d.get("OuterOffset", 0)),
+        })
+    out.sort(key=lambda a: (a["x"], a["z"]))
+    return out
+
+
+def build_landmarks(names: list[str], rows: list[list[int]]) -> dict:
+    pats = [(k, lbl, glyph, col, re.compile(rx, re.I)) for k, lbl, glyph, col, rx in LANDMARKS]
+    kinds, pts = [], []
+    idx = {}
+    for k, lbl, glyph, col, _ in pats:
+        idx[k] = len(kinds)
+        kinds.append({"id": k, "label": lbl, "glyph": glyph, "colour": col, "n": 0})
+    for ti, x, z, _tier, _use in rows:
+        b = names[ti]
+        for k, _lbl, _g, _c, rx in pats:
+            if rx.search(b):
+                pts.append([idx[k], x, z])
+                kinds[idx[k]]["n"] += 1
+                break
+    pts.sort()
+    return {"kinds": kinds, "points": pts}
+
+
 RE_CLASS = re.compile(r"class\s+(\w+)\s+extends\s+RecipeBase")
 RE_ING = re.compile(r'InsertIngredient\s*\(\s*(\d+)\s*,\s*"([^"]+)"')
 RE_RES = re.compile(r'AddResult\s*\(\s*"([^"]+)"')
@@ -426,6 +542,12 @@ def cmd_build() -> int:
     write_json(OUT / "limits.json", limits)
     tier_px = render_tier_png(OUT / "tiers.png", area)
     print(f"  docs/data/tiers.png  {(OUT/'tiers.png').stat().st_size:,}b  ({tier_px}x{tier_px})")
+    zones = render_usage_pngs(OUT, area, limits["usage"])
+    print(f"  docs/data/usage_*.png  {len(zones)} zone overlays")
+    landmarks = build_landmarks(names, rows)
+    write_json(OUT / "landmarks.json", landmarks)
+    toxic = parse_effect_areas((ce / "cfgEffectArea.json").read_bytes())
+    write_json(OUT / "toxic.json", toxic)
     write_json(OUT / "recipes.json", recipes)
     write_json(OUT / "meta.json", {
         "map": "chernarusplus",
@@ -434,6 +556,8 @@ def cmd_build() -> int:
         "commits": {k: v["commit"] for k, v in sorted(lock["sources"].items())},
         "counts": {**counts, "recipes": len(recipes)},
         "areaGrid": area[0],
+        "zones": zones,
+        "toxic": len(toxic),
         "tierResolved": True,
     })
 

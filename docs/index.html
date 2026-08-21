@@ -149,17 +149,25 @@
     font-size:10.5px;color:#7d8468;text-shadow:0 0 3px #000,0 0 3px #000;
     white-space:nowrap;pointer-events:none;
   }
-  #layers{
-    position:absolute;left:10px;bottom:10px;z-index:500;display:flex;align-items:center;
-    gap:8px;background:#12140fdd;border:1px solid var(--line);border-radius:5px;padding:5px 8px;
-  }
+  #layers{position:absolute;left:10px;bottom:10px;z-index:500}
   #layers button{
     background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:4px;
-    font:inherit;font-size:11.5px;padding:2px 8px;cursor:pointer;
+    font:inherit;font-size:11.5px;padding:3px 8px;cursor:pointer;
   }
-  #layers button[aria-pressed=true]{background:var(--accent2);color:#0f1108;font-weight:600}
-  #tierKey{font-size:11px;color:var(--dim);display:flex;align-items:center;gap:3px}
-  #tierKey i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-left:5px}
+  #layers button[aria-pressed=true]{color:#0f1108;font-weight:600}
+  #layToggle{background:#12140fee}
+  #layPanel{
+    background:#12140fee;border:1px solid var(--line);border-radius:5px;padding:8px 10px;
+    margin-bottom:5px;max-height:62vh;overflow-y:auto;width:250px;
+  }
+  .lgrp{margin-bottom:9px}
+  .lgrp:last-child{margin-bottom:0}
+  .lgrp b{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;
+    color:var(--dim);margin-bottom:4px;font-weight:600}
+  .mk{
+    font-size:13px;line-height:1;text-shadow:0 0 3px #000,0 0 2px #000;
+    pointer-events:none;user-select:none;
+  }
   #hud{
     position:absolute;right:10px;bottom:10px;z-index:500;background:#12140fdd;
     border:1px solid var(--line);border-radius:5px;padding:5px 9px;
@@ -238,11 +246,17 @@
   <div id="map"></div>
 </div>
 <div id="layers">
-  <button id="tTier" aria-pressed="false">Tier zones</button>
-  <span id="tierKey" hidden>
-    <i style="background:#5aaa46"></i>T1 <i style="background:#d7be3c"></i>T2
-    <i style="background:#e18c2d"></i>T3 <i style="background:#d24137"></i>T4
-  </span>
+  <button id="layToggle" aria-expanded="false">Layers ▴</button>
+  <div id="layPanel" hidden>
+    <div class="lgrp"><b>Tier zones</b>
+      <div class="filt" id="layTier"></div></div>
+    <div class="lgrp"><b>Usage zones</b>
+      <div class="filt" id="layZone"></div></div>
+    <div class="lgrp"><b>Hazards</b>
+      <div class="filt" id="layHaz"></div></div>
+    <div class="lgrp"><b>Landmarks</b>
+      <div class="filt" id="layMark"></div></div>
+  </div>
 </div>
 <div id="hud">—</div>
 <div id="load">loading map data…</div>
@@ -266,7 +280,7 @@ const TOWNS = [
   ["Kabanino",4800,8200],["Pustoshka",3200,7000],
 ];
 
-let ITEMS, GROUPS, INST, RECIPES, META, LIMITS, MADE_BY;
+let ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, MADE_BY;
 /* Catalog entries. Colour variants of one item (WaterproofBag_Green/Orange/…)
    share the same physical loot points, so they collapse into a single entry and
    are counted ONCE — summing them would multiply the same points by 3. Families
@@ -281,8 +295,9 @@ const picked = [];
 /* ---------- data ---------- */
 async function boot(){
   const j = async n => (await fetch(`data/${n}.json`)).json();
-  [ITEMS, GROUPS, INST, RECIPES, META, LIMITS] =
-    await Promise.all(["items","groups","instances","recipes","meta","limits"].map(j));
+  [ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC] =
+    await Promise.all(["items","groups","instances","recipes","meta","limits","landmarks",
+      "toxic"].map(j));
   LIMITS.value.forEach((n,i) => TIERBIT[n] = 1 << i);
   buildEntries();
 
@@ -521,22 +536,83 @@ function initMap(){
     L.marker([z,x],{opacity:0, icon:L.divIcon({className:"", html:`<div class="lbl">${nm}</div>`,
       iconSize:[0,0]})}).addTo(map);
 
-  /* Tier overlay: the areaflags value plane, downsampled 4x to 1024^2 at build
-     time. 12 KB, because tier regions are large and flat. Image row 0 is north,
-     matching Leaflet's bounds convention. */
-  tierLayer = L.imageOverlay("data/tiers.png", [[0,0],[SIZE,SIZE]],
-    {opacity:0.42, interactive:false, className:"tierimg"});
-  $("#tTier").onclick = () => {
-    const on = $("#tTier").getAttribute("aria-pressed") !== "true";
-    $("#tTier").setAttribute("aria-pressed", String(on));
-    $("#tierKey").hidden = !on;
-    on ? tierLayer.addTo(map) : tierLayer.remove();
-  };
+  buildLayerPanel();
 
   map.on("mousemove", e => {
     $("#hud").textContent = `x ${Math.round(e.latlng.lng)}  z ${Math.round(e.latlng.lat)}`;
   });
   map.on("click", e => setPos(Math.round(e.latlng.lng), Math.round(e.latlng.lat)));
+}
+
+/* ---------- layers ----------
+   Overlays are the two areaflags planes rendered to PNG at build time; landmarks
+   come from building class names, the only place the data says what a building
+   actually is. All of it is generated, so nothing here is hand-placed except the
+   town labels. */
+function overlay(url, opacity){
+  return L.imageOverlay(url, [[0,0],[SIZE,SIZE]],
+    {opacity, interactive:false, className:"tierimg"});
+}
+
+function toggleBtn(host, label, colour, onOn, onOff){
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.setAttribute("aria-pressed","false");
+  if (colour) b.style.borderLeft = `3px solid ${colour}`;
+  b.onclick = () => {
+    const on = b.getAttribute("aria-pressed") !== "true";
+    b.setAttribute("aria-pressed", String(on));
+    b.style.background = on ? (colour || "var(--accent2)") : "";
+    b.style.color = on ? "#0f1108" : "";
+    on ? onOn() : onOff();
+  };
+  host.appendChild(b);
+}
+
+function buildLayerPanel(){
+  $("#layToggle").onclick = () => {
+    const open = $("#layPanel").hidden;
+    $("#layPanel").hidden = !open;
+    $("#layToggle").setAttribute("aria-expanded", String(open));
+    $("#layToggle").textContent = open ? "Layers ▾" : "Layers ▴";
+  };
+
+  tierLayer = overlay("data/tiers.png", 0.42);
+  toggleBtn($("#layTier"), "Tier 1–4", "#d7be3c",
+    () => tierLayer.addTo(map), () => tierLayer.remove());
+
+  for (const [name, z] of Object.entries(META.zones || {})){
+    const lyr = overlay(`data/usage_${name}.png`, 0.5);
+    toggleBtn($("#layZone"), name, `rgb(${z.rgb.join(",")})`,
+      () => lyr.addTo(map), () => lyr.remove());
+  }
+
+  /* Permanent contaminated zones, drawn at their true radius from
+     cfgEffectArea.json rather than approximated from the areaflags raster.
+     Inner circle = the trigger; outer ring = radius + OuterOffset, where the gas
+     particles reach. */
+  const haz = L.layerGroup();
+  for (const t of TOXIC){
+    L.circle([t.z,t.x], {radius:t.outer, color:"#8fd633", weight:1, opacity:.5,
+      fillColor:"#8fd633", fillOpacity:.10, interactive:false}).addTo(haz);
+    L.circle([t.z,t.x], {radius:t.r, color:"#b6f24a", weight:1.5,
+      fillColor:"#8fd633", fillOpacity:.22})
+      .bindPopup(`<b>☣ ${t.name}</b><br>Permanent contaminated zone<br>
+        radius ${t.r} m (gas to ${t.outer} m)<br><small>x ${t.x}, z ${t.z}</small>`)
+      .addTo(haz);
+  }
+  toggleBtn($("#layHaz"), `\u2623 Toxic zones (${TOXIC.length})`, "#8fd633",
+    () => haz.addTo(map), () => haz.remove());
+
+  for (const k of LANDMARKS.kinds){
+    if (!k.n) continue;
+    const grp = L.layerGroup(
+      LANDMARKS.points.filter(p => LANDMARKS.kinds[p[0]] === k)
+        .map(([, x, z]) => L.marker([z,x], {interactive:false, icon:L.divIcon({
+          className:"", html:`<div class="mk">${k.glyph}</div>`, iconSize:[14,14]})})));
+    toggleBtn($("#layMark"), `${k.glyph} ${k.label} (${k.n})`, k.colour,
+      () => grp.addTo(map), () => grp.remove());
+  }
 }
 
 function setPos(x, z){

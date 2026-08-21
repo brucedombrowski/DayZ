@@ -9,6 +9,10 @@
           "bytes": 83886104,
           "sha256": "08ecb38450eedaca16e9f531d75920b0a8410fa937f4239a33e66868b2e06d67"
         },
+        "dayzOffline.chernarusplus/cfgEffectArea.json": {
+          "bytes": 6280,
+          "sha256": "82e026899951fcecb5f8ea315ee6292a01e2944460b76d5b4534a122f238b6e0"
+        },
         "dayzOffline.chernarusplus/cfglimitsdefinition.xml": {
           "bytes": 1280,
           "sha256": "07f4dedfb53e97b6150eb2374c539604b5800b8ec4c4ae243e26419aa77d4d26"
