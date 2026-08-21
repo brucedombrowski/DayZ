@@ -7,211 +7,266 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🧭</text></svg>">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<link rel="stylesheet" href="tokens/colors.css">
+<link rel="stylesheet" href="tokens/typography.css">
 <style>
+  /* Domain tokens. Everything else comes from the HFE design system; these are
+     DATA ENCODINGS, not UI chrome -- a sequential tier ramp and map surfaces have
+     no equivalent in a semantic palette. Defined once here, per theme, and never
+     inlined at a use site. */
   :root{
-    --bg:#12140f; --panel:#1b1e17; --panel2:#232719; --line:#343a28;
-    --text:#e6e8dd; --dim:#9aa088; --accent:#b8c94a; --accent2:#7f8f2e;
-    --warn:#e0a33e; --warnbg:#2e2413; --danger:#d2694a;
+    --map-bg:#0c0e0a; --map-dot:#6b7a52; --map-dot-hot:#cfe063;
+    --tier1:#5aaa46; --tier2:#d7be3c; --tier3:#e18c2d; --tier4:#d24137;
+    --unique:#eb5adc; --route:#b8c94a; --scrim:rgba(10,10,10,.88);
+    --side-w:390px;   /* map overlays anchor past the sidebar, not the viewport */
   }
+  [data-theme="light"]{
+    --map-bg:#eceee6; --map-dot:#6e7c5e; --map-dot-hot:#3d5a0e;
+    --tier1:#3f7a30; --tier2:#9a7c10; --tier3:#a85c14; --tier4:#a32b20;
+    --unique:#a3199a; --route:#5c6b12; --scrim:rgba(250,250,250,.92);
+  }
+
   *{box-sizing:border-box}
   html,body{margin:0;height:100%;overflow:hidden}
   body{
-    background:var(--bg);color:var(--text);
-    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg); color:var(--text);
+    font:var(--font-weight-normal) var(--text-base)/var(--line-height) var(--font-sans);
   }
   #app{display:flex;height:100%}
 
+  /* WCAG 2.4.7 -- a visible focus indicator on every interactive element. */
+  :focus-visible{outline:2px solid var(--border-accent);outline-offset:2px;border-radius:3px}
+
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+    clip:rect(0 0 0 0);white-space:nowrap;border:0}
+
   /* ---- sidebar ---- */
   #side{
-    width:380px;min-width:380px;height:100%;display:flex;flex-direction:column;
-    background:var(--panel);border-right:1px solid var(--line);
+    width:var(--side-w);min-width:var(--side-w);height:100%;display:flex;flex-direction:column;
+    background:var(--bg-card);border-right:1px solid var(--border);
   }
-  header{padding:12px 14px;border-bottom:1px solid var(--line)}
-  header h1{margin:0;font-size:15px;letter-spacing:.02em}
-  header p{margin:2px 0 0;font-size:11.5px;color:var(--dim)}
+  header{padding:10px 14px;border-bottom:1px solid var(--border);
+    display:flex;align-items:flex-start;gap:8px}
+  header h1{margin:0;font-size:var(--text-xl);color:var(--text-heading);
+    font-weight:var(--font-weight-bold);line-height:var(--line-height-tight)}
+  header p{margin:2px 0 0;font-size:var(--text-xs);color:var(--text-muted)}
+  #themeBtn{
+    margin-left:auto;flex-shrink:0;background:var(--bg-card-alt);color:var(--text);
+    border:1px solid var(--border);border-radius:4px;padding:4px 8px;
+    font:var(--font-weight-medium) var(--text-xs) var(--font-sans);cursor:pointer;
+  }
+  #themeBtn:hover{background:var(--hover-bg)}
 
-  .tabs{display:flex;border-bottom:1px solid var(--line)}
+  .tabs{display:flex;border-bottom:1px solid var(--border)}
   .tabs button{
-    flex:1;padding:9px;background:none;border:0;border-bottom:2px solid transparent;
-    color:var(--dim);font:inherit;font-size:13px;cursor:pointer;
+    flex:1;padding:8px 4px;background:none;border:0;border-bottom:2px solid transparent;
+    color:var(--text-muted);font:var(--font-weight-medium) var(--text-sm) var(--font-sans);
+    cursor:pointer;
   }
-  .tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
-  .tabs button:hover{color:var(--text)}
+  .tabs button[aria-selected=true]{color:var(--text);border-bottom-color:var(--border-accent);
+    font-weight:var(--font-weight-semibold)}
+  .tabs button:hover{color:var(--text);background:var(--hover-bg)}
 
   .pane{flex:1;overflow-y:auto;padding:12px 14px;display:none}
   .pane[data-active]{display:block}
 
-  label.fld{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.08em;
-    color:var(--dim);margin:12px 0 5px}
+  label.fld{display:block;font-size:var(--text-xs);text-transform:uppercase;
+    letter-spacing:.07em;color:var(--text-muted);margin:14px 0 5px;
+    font-weight:var(--font-weight-semibold)}
   label.fld:first-child{margin-top:0}
   input[type=text],input[type=number]{
-    width:100%;padding:7px 9px;background:var(--panel2);color:var(--text);
-    border:1px solid var(--line);border-radius:5px;font:inherit;
+    width:100%;padding:7px 9px;background:var(--bg-card-alt);color:var(--text);
+    border:1px solid var(--border);border-radius:4px;
+    font:var(--font-weight-normal) var(--text-base) var(--font-sans);
   }
-  input:focus{outline:2px solid var(--accent2);outline-offset:-1px}
+  input[type=range]{width:100%;accent-color:var(--border-accent)}
   .row{display:flex;gap:8px}
   .row>*{flex:1;min-width:0}
-  button.act{
-    padding:8px 12px;background:var(--accent2);color:#0f1108;border:0;border-radius:5px;
-    font:inherit;font-weight:600;cursor:pointer;
-  }
-  button.act:hover{background:var(--accent)}
-  button.act[disabled]{opacity:.4;cursor:default}
 
   /* ---- autocomplete ---- */
   .ac{position:relative}
   .ac ul{
     position:absolute;z-index:1000;left:0;right:0;top:100%;margin:2px 0 0;padding:0;
-    list-style:none;max-height:260px;overflow-y:auto;background:var(--panel2);
-    border:1px solid var(--line);border-radius:5px;box-shadow:0 8px 24px #0009;
+    list-style:none;max-height:260px;overflow-y:auto;background:var(--bg-card-alt);
+    border:1px solid var(--border);border-radius:4px;box-shadow:0 8px 24px rgba(0,0,0,.45);
   }
   .ac li{padding:6px 9px;cursor:pointer;display:flex;justify-content:space-between;gap:8px}
-  .ac li[aria-selected=true],.ac li:hover{background:var(--accent2);color:#0f1108}
-  .ac li small{color:var(--dim);flex-shrink:0}
-  .ac li[aria-selected=true] small{color:#0f1108}
+  .ac li[aria-selected=true],.ac li:hover{background:var(--border-accent);color:#fff}
+  .ac li small{color:var(--text-muted);flex-shrink:0}
+  .ac li[aria-selected=true] small{color:#fff}
 
   .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:7px}
   .chip{
     display:flex;align-items:center;gap:6px;padding:3px 6px 3px 9px;
-    background:var(--panel2);border:1px solid var(--line);border-radius:20px;font-size:12.5px;
+    background:var(--bg-card-alt);border:1px solid var(--border);border-radius:20px;
+    font-size:var(--text-sm);
   }
-  .chip button{background:none;border:0;color:var(--dim);cursor:pointer;font-size:15px;
-    line-height:1;padding:0 2px}
-  .chip button:hover{color:var(--danger)}
+  .chip button{background:none;border:0;color:var(--text-muted);cursor:pointer;
+    font-size:var(--text-lg);line-height:1;padding:0 2px}
+  .chip button:hover{color:var(--err)}
+
+  /* ---- toggle buttons (layers, filters, profiles) ----
+     WCAG 1.4.1: pressed state carries a "✓" glyph, so it is never colour alone. */
+  .filt{display:flex;flex-wrap:wrap;gap:4px}
+  .filt button{
+    padding:3px 8px;background:var(--bg-card-alt);color:var(--text-muted);
+    border:1px solid var(--border);border-radius:20px;
+    font:var(--font-weight-normal) var(--text-xs) var(--font-sans);cursor:pointer;
+  }
+  .filt button:hover{color:var(--text);background:var(--hover-bg)}
+  .filt button[aria-pressed=true]{
+    background:var(--border-accent);color:#fff;border-color:var(--border-accent);
+    font-weight:var(--font-weight-semibold);
+  }
+  .filt button[aria-pressed=true]::before{content:"\2713 ";font-weight:700}
+
+  .grpbar{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+  .grpbar b{flex:1;font-size:var(--text-xs);text-transform:uppercase;letter-spacing:.06em;
+    color:var(--text-muted);font-weight:var(--font-weight-semibold)}
+  .grpbar button{
+    background:none;border:1px solid var(--border);color:var(--text-muted);
+    border-radius:3px;padding:1px 6px;
+    font:var(--font-weight-medium) var(--text-xs) var(--font-sans);cursor:pointer;
+  }
+  .grpbar button:hover{color:var(--text);background:var(--hover-bg)}
 
   /* ---- results ---- */
   .res{list-style:none;margin:10px 0 0;padding:0}
   .res li{
-    padding:9px 10px;margin-bottom:6px;background:var(--panel2);
-    border:1px solid var(--line);border-left:3px solid var(--accent2);
-    border-radius:5px;cursor:pointer;
+    padding:8px 10px;margin-bottom:5px;background:var(--bg-card-alt);
+    border:1px solid var(--border);border-left:3px solid var(--border-accent);
+    border-radius:4px;cursor:pointer;
   }
-  .res li:hover{border-left-color:var(--accent);background:#282d1c}
+  .res li:hover{background:var(--hover-bg)}
   .res .r1{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
-  .res .nm{font-weight:600}
-  .res .dist{font-size:12px;color:var(--accent);white-space:nowrap}
-  .res .r2{font-size:11.5px;color:var(--dim);margin-top:2px}
+  .res .nm{font-weight:var(--font-weight-semibold)}
+  .res .dist{font-size:var(--text-sm);color:var(--info);white-space:nowrap}
+  .res .r2{font-size:var(--text-xs);color:var(--text-muted);margin-top:2px}
 
-  .note{
-    padding:9px 11px;border-radius:5px;font-size:12.5px;margin:10px 0;
-    background:var(--warnbg);border:1px solid #5a4520;color:#f0cd8a;
-  }
-  .note b{color:var(--warn)}
-  .muted{color:var(--dim);font-size:12.5px}
+  .note{padding:8px 11px;border-radius:4px;font-size:var(--text-sm);margin:10px 0;
+    background:var(--row-dup);border:1px solid var(--warn);color:var(--text)}
+  .note.ok{background:var(--row-reviewed);border-color:var(--ok)}
+  .muted{color:var(--text-muted);font-size:var(--text-sm)}
+  .mono{font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-muted)}
+  a{color:var(--link);text-decoration:none}
+  a:hover{color:var(--link-hover);text-decoration:underline}
 
   /* ---- craft tree ---- */
-  .tree{list-style:none;margin:8px 0 0;padding:0;font-size:13px}
-  .tree ul{list-style:none;margin:0;padding-left:16px;border-left:1px solid var(--line)}
+  .tree{list-style:none;margin:8px 0 0;padding:0;font-size:var(--text-base)}
+  .tree ul{list-style:none;margin:0;padding-left:16px;border-left:1px solid var(--border)}
   .tree li{padding:2px 0}
-  .tree .it{font-weight:600}
-  .tree .via{color:var(--dim);font-size:11.5px}
-  .tree .leaf-loot{color:var(--accent)}
-  .tree .leaf-none{color:var(--danger)}
-  .tree .tool{color:#8fb4d0}
-  .tree .cyc{color:var(--dim);font-style:italic}
+  .tree .it{font-weight:var(--font-weight-semibold)}
+  .tree .via{color:var(--text-muted);font-size:var(--text-xs)}
+  .tree .leaf-loot{color:var(--ok)}
+  .tree .leaf-none{color:var(--err)}
+  .tree .tool{color:var(--info)}
+  .tree .cyc{color:var(--text-muted);font-style:italic}
   .tree button.find{
-    background:none;border:1px solid var(--line);color:var(--accent);border-radius:4px;
-    font:inherit;font-size:10.5px;padding:0 5px;margin-left:6px;cursor:pointer;
+    background:none;border:1px solid var(--border);color:var(--link);border-radius:3px;
+    font:var(--font-weight-normal) var(--text-xs) var(--font-sans);padding:0 5px;
+    margin-left:6px;cursor:pointer;
   }
-  .tree button.find:hover{background:var(--accent2);color:#0f1108}
-
-  /* ---- catalog ---- */
-  .filt{display:flex;flex-wrap:wrap;gap:4px}
-  .filt button{
-    padding:3px 8px;background:var(--panel2);color:var(--dim);border:1px solid var(--line);
-    border-radius:20px;font:inherit;font-size:11.5px;cursor:pointer;
-  }
-  .filt button:hover{color:var(--text);border-color:var(--accent2)}
-  .filt button[aria-pressed=true]{background:var(--accent2);color:#0f1108;
-    border-color:var(--accent2);font-weight:600}
-  .cat{list-style:none;margin:10px 0 0;padding:0}
-  .cat li{
-    display:flex;justify-content:space-between;align-items:center;gap:8px;
-    padding:6px 9px;margin-bottom:4px;background:var(--panel2);
-    border:1px solid var(--line);border-radius:5px;cursor:pointer;
-  }
-  .cat li:hover{border-color:var(--accent2);background:#282d1c}
-  .cat li[data-in=1]{border-left:3px solid var(--accent)}
-  .cat .nm{font-weight:600}
-  .cat .cls{font-size:11px;color:var(--dim);font-family:ui-monospace,Menlo,monospace}
-  .cat .meta{font-size:11px;color:var(--dim);text-align:right;white-space:nowrap}
-  .cat .t{color:var(--accent)}
+  .tree button.find:hover{background:var(--hover-bg)}
 
   /* ---- building loot ---- */
-  .cont{margin:12px 0 0;padding:9px 10px;background:var(--panel2);
-    border:1px solid var(--line);border-radius:5px}
-  .cont h4{margin:0 0 2px;font-size:12.5px}
-  .cont .sub{font-size:11px;color:var(--dim);margin-bottom:6px}
-  .lt{list-style:none;margin:0;padding:0;font-size:12.5px}
+  .cont{margin:12px 0 0;padding:9px 10px;background:var(--bg-card-alt);
+    border:1px solid var(--border);border-radius:4px}
+  .cont h4{margin:0 0 2px;font-size:var(--text-md);font-weight:var(--font-weight-semibold)}
+  .cont .sub{font-size:var(--text-xs);color:var(--text-muted);margin-bottom:6px}
+  .lt{list-style:none;margin:0;padding:0;font-size:var(--text-base)}
   .lt li{display:flex;justify-content:space-between;gap:8px;padding:2px 0;cursor:pointer}
-  .lt li:hover{color:var(--accent)}
-  .lt .pc{color:var(--accent);font-variant-numeric:tabular-nums;flex-shrink:0}
-  .lt .pc.lo{color:var(--dim)}
-  input[type=range]{accent-color:var(--accent2)}
-  .stop{display:flex;gap:9px;padding:7px 9px;margin-bottom:5px;background:var(--panel2);
-    border:1px solid var(--line);border-left:3px solid var(--accent2);border-radius:5px;
-    cursor:pointer}
-  .stop:hover{border-left-color:var(--accent)}
-  .stop .no{font-weight:700;color:var(--accent);min-width:18px}
-  .stop .d{flex:1;min-width:0}
-  .stop .t{font-size:11px;color:var(--dim)}
-  .kpi{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px}
-  .kpi div{flex:1;min-width:70px;background:var(--panel2);border:1px solid var(--line);
-    border-radius:5px;padding:6px 8px}
-  .kpi b{display:block;font-size:15px;color:var(--accent)}
-  .kpi span{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
-  .more{background:none;border:0;color:var(--accent);font:inherit;font-size:11.5px;
-    cursor:pointer;padding:4px 0 0}
+  .lt li:hover{color:var(--link)}
+  .lt .pc{color:var(--text);font-variant-numeric:tabular-nums;flex-shrink:0}
+  .lt .pc.lo{color:var(--text-muted)}
+  .more{background:none;border:0;color:var(--link);
+    font:var(--font-weight-normal) var(--text-sm) var(--font-sans);cursor:pointer;padding:4px 0 0}
   .more:hover{text-decoration:underline}
 
+  /* ---- run planner ---- */
+  .stop{display:flex;gap:9px;padding:7px 9px;margin-bottom:5px;background:var(--bg-card-alt);
+    border:1px solid var(--border);border-left:3px solid var(--border-accent);
+    border-radius:4px;cursor:pointer}
+  .stop:hover{background:var(--hover-bg)}
+  .stop .no{font-weight:var(--font-weight-bold);color:var(--text);min-width:18px}
+  .stop .d{flex:1;min-width:0}
+  .stop .t{font-size:var(--text-xs);color:var(--text-muted)}
+  .kpi{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px}
+  .kpi div{flex:1;min-width:70px;background:var(--bg-card-alt);border:1px solid var(--border);
+    border-radius:4px;padding:6px 8px}
+  .kpi b{display:block;font-size:var(--text-xl);color:var(--text);
+    font-weight:var(--font-weight-bold)}
+  .kpi span{font-size:var(--text-xs);color:var(--text-muted);text-transform:uppercase;
+    letter-spacing:.05em}
+
   /* ---- map ---- */
-  #map{flex:1;height:100%;background:#0c0e0a}
-  .leaflet-container{background:#0c0e0a;font-family:inherit}
+  #map{flex:1;height:100%;background:var(--map-bg)}
+  .leaflet-container{background:var(--map-bg);font-family:var(--font-sans)}
   .leaflet-popup-content-wrapper,.leaflet-popup-tip{
-    background:var(--panel2);color:var(--text);border:1px solid var(--line)}
-  .leaflet-popup-content{margin:9px 11px;font-size:13px}
-  .leaflet-popup-content a{color:var(--accent)}
-  .tierimg{image-rendering:auto;mix-blend-mode:screen}
+    background:var(--bg-card-alt);color:var(--text);border:1px solid var(--border)}
+  .leaflet-popup-content{margin:9px 11px;font-size:var(--text-base)}
+  .leaflet-control-zoom a{background:var(--bg-card);color:var(--text);
+    border-color:var(--border)}
+  .leaflet-control-zoom a:hover{background:var(--hover-bg)}
+  /* Overlay PNGs are generated once and cannot carry two palettes. In light
+     theme they sit on a pale surface, so darken and saturate to keep the tier
+     ramp separable. Meaning never rests on colour alone -- the layer button
+     names the zone. */
+  .tierimg{image-rendering:auto}
+  [data-theme="light"] .tierimg{filter:saturate(1.25) brightness(.72)}
   .lbl{
-    font-size:11px;color:#aab392;font-weight:600;text-shadow:0 0 3px #000,0 0 3px #000;
-    white-space:nowrap;pointer-events:none;line-height:1.15;text-align:center;
-    /* iconSize is 0 so the anchor is the point itself; centre the text on it
-       rather than hanging it down-right, which collided on close pairs. */
-    transform:translate(-50%,-50%);
+    font-size:var(--text-xs);color:var(--text);font-weight:var(--font-weight-semibold);
+    text-shadow:0 0 3px var(--bg),0 0 3px var(--bg),0 0 2px var(--bg);
+    white-space:nowrap;pointer-events:none;line-height:var(--line-height-tight);
+    text-align:center;transform:translate(-50%,-50%);
   }
-  .lbl .cyr{font-weight:400;color:#8d9678;font-size:10px}
-  .lbl.unsure{opacity:.55;font-style:italic}
-  #layers{position:absolute;left:10px;bottom:10px;z-index:500}
-  #layers button{
-    background:var(--panel2);color:var(--dim);border:1px solid var(--line);border-radius:4px;
-    font:inherit;font-size:11.5px;padding:3px 8px;cursor:pointer;
+  .lbl .cyr{font-weight:var(--font-weight-normal);color:var(--text-muted);
+    font-size:calc(var(--text-xs) * .92)}
+  .lbl.unsure{opacity:.6;font-style:italic}
+  .mk{font-size:var(--text-md);line-height:1;pointer-events:none;user-select:none;
+    text-shadow:0 0 3px var(--bg),0 0 2px var(--bg)}
+
+  #layers{position:absolute;left:calc(var(--side-w) + 10px);bottom:10px;z-index:500}
+  #layers>button{
+    background:var(--scrim);color:var(--text);border:1px solid var(--border);
+    border-radius:4px;font:var(--font-weight-semibold) var(--text-sm) var(--font-sans);
+    padding:5px 10px;cursor:pointer;
   }
-  #layers button[aria-pressed=true]{color:#0f1108;font-weight:600}
-  #layToggle{background:#12140fee}
   #layPanel{
-    background:#12140fee;border:1px solid var(--line);border-radius:5px;padding:8px 10px;
-    margin-bottom:5px;max-height:62vh;overflow-y:auto;width:250px;
+    background:var(--scrim);border:1px solid var(--border);border-radius:4px;
+    padding:9px 10px;margin-bottom:5px;max-height:66vh;overflow-y:auto;width:270px;
+    backdrop-filter:blur(3px);
   }
-  .lgrp{margin-bottom:9px}
+  .lgrp{margin-bottom:10px}
   .lgrp:last-child{margin-bottom:0}
-  .lgrp b{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;
-    color:var(--dim);margin-bottom:4px;font-weight:600}
-  .mk{
-    font-size:13px;line-height:1;text-shadow:0 0 3px #000,0 0 2px #000;
-    pointer-events:none;user-select:none;
-  }
+
   #hud{
-    position:absolute;right:10px;bottom:10px;z-index:500;background:#12140fdd;
-    border:1px solid var(--line);border-radius:5px;padding:5px 9px;
-    font-size:11.5px;color:var(--dim);font-variant-numeric:tabular-nums;
+    position:absolute;right:10px;bottom:10px;z-index:500;background:var(--scrim);
+    border:1px solid var(--border);border-radius:4px;padding:5px 9px;
+    font:var(--font-weight-normal) var(--text-xs) var(--font-mono);color:var(--text-muted);
   }
+  /* Arming banner: setting a point is a deliberate, visible, one-shot mode. */
+  #armed{
+    position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:900;
+    background:var(--border-accent);color:#fff;border-radius:4px;padding:6px 14px;
+    font:var(--font-weight-semibold) var(--text-base) var(--font-sans);
+    box-shadow:0 4px 14px rgba(0,0,0,.4);
+  }
+  #map.arming{cursor:crosshair}
   #load{
     position:absolute;inset:0;z-index:2000;display:flex;align-items:center;
-    justify-content:center;background:var(--bg);color:var(--dim);
+    justify-content:center;background:var(--bg);color:var(--text-muted);
   }
   @media (max-width:760px){
     #app{flex-direction:column}
-    #side{width:100%;min-width:0;height:52%;border-right:0;border-bottom:1px solid var(--line)}
+    #side{width:100%;min-width:0;height:54%;border-right:0;
+      border-bottom:1px solid var(--border)}
+    #layers{left:10px}
+  }
+  @media print{
+    #side{width:100%;height:auto;overflow:visible}
+    .pane{display:block !important;overflow:visible}
+    #map,#layers,#hud,.tabs{display:none}
+    .more{display:none}
   }
 </style>
 </head>
@@ -219,8 +274,11 @@
 <div id="app">
   <div id="side">
     <header>
-      <h1>DayZ Loot Run Planner <span style="color:var(--dim);font-weight:400">— Chernarus+</span></h1>
-      <p id="sub">loading…</p>
+      <div>
+        <h1>DayZ Loot Run Planner <span style="color:var(--text-muted);font-weight:400">— Chernarus+</span></h1>
+        <p id="sub">loading…</p>
+      </div>
+      <button id="themeBtn" type="button" aria-label="Switch colour theme">◐ Theme</button>
     </header>
     <div class="tabs" role="tablist">
       <button role="tab" id="tab-loot" aria-selected="true" aria-controls="pane-loot">Loot map</button>
@@ -239,7 +297,7 @@
       </div>
       <div class="chips" id="chips"></div>
 
-      <label class="fld">My position (click the map, or type)</label>
+      <label class="fld">My position</label>
       <div class="row">
         <input type="number" id="px" placeholder="x (east)" step="1">
         <input type="number" id="pz" placeholder="z (north)" step="1">
@@ -311,7 +369,7 @@
       <div id="cout"><p class="muted" style="margin-top:12px">
         Search is limited to the <b>133 items a recipe can actually produce</b> —
         everything else in DayZ is loot-only. Leaves marked
-        <span style="color:var(--accent)">LOOT</span> can be sent straight to the map.
+        <span style="color:var(--ok)">LOOT</span> can be sent straight to the map.
       </p></div>
     </div>
   </div>
@@ -319,39 +377,48 @@
 </div>
 <div id="layers">
   <button id="layToggle" aria-expanded="false">Layers ▴</button>
-  <div id="layPanel" hidden>
-    <div class="lgrp"><b>Tier zones</b>
-      <div class="filt" id="layTier"></div></div>
-    <div class="lgrp"><b>Usage zones <span style="font-weight:400;text-transform:none">(terrain)</span></b>
-      <div class="filt" id="layZone"></div></div>
-    <div class="lgrp"><b>Loot usage <span style="font-weight:400;text-transform:none">(buildings)</span></b>
-      <div class="filt" id="layBUse"></div></div>
-    <div class="lgrp"><b>Events &amp; vehicles</b>
-      <div class="filt" id="layEvent"></div></div>
-    <div class="lgrp"><b>Player spawns</b>
-      <div class="filt" id="laySpawn"></div></div>
-    <div class="lgrp"><b>Hazards</b>
-      <div class="filt" id="layHaz"></div></div>
-    <div class="lgrp"><b>Landmarks</b>
-      <div class="filt" id="layMark"></div></div>
+  <div id="layPanel" hidden role="group" aria-label="Map layers">
+    <div class="lgrp"><div class="filt" id="layTier"></div></div>
+    <div class="lgrp"><div class="filt" id="layZone"></div></div>
+    <div class="lgrp"><div class="filt" id="layBUse"></div></div>
+    <div class="lgrp"><div class="filt" id="layHaz"></div></div>
+    <div class="lgrp"><div class="filt" id="layWild"></div></div>
+    <div class="lgrp"><div class="filt" id="layEvent"></div></div>
+    <div class="lgrp"><div class="filt" id="laySpawn"></div></div>
+    <div class="lgrp"><div class="filt" id="layMark"></div></div>
   </div>
 </div>
 <div id="hud">—</div>
 <div id="load">loading map data…</div>
 
+<script>
+  /* HFE: both themes must work. Honour the OS preference, remember an explicit
+     choice, and set it before first paint so nothing flashes. */
+  (function(){
+    const saved = localStorage.getItem("dayz-theme");
+    const dark = saved ? saved === "dark"
+      : !window.matchMedia("(prefers-color-scheme: light)").matches;
+    if (!dark) document.documentElement.setAttribute("data-theme", "light");
+  })();
+</script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
         integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 "use strict";
 const SIZE = 15360;
 const $ = s => document.querySelector(s);
+/* Leaflet paints to canvas and cannot read CSS custom properties, so resolve a
+   token to its computed value at call time. Keeps every colour in the token
+   system even where the renderer needs a literal. */
+const tok = n => getComputedStyle(document.documentElement)
+  .getPropertyValue("--" + n).trim() || "#888";
 
 /* Place labels come from config/places.json, whose coordinates are validated
    against building density at build time. Names and Cyrillic are human knowledge
    -- the CLE has no place names and sign text lives in unpublished terrain data. */
 
 let ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS,
-    PLAYER, PROFILES, PLACES, MADE_BY;
+    PLAYER, PROFILES, PLACES, ANIMALS, MADE_BY;
 /* Catalog entries. Colour variants of one item (WaterproofBag_Green/Orange/…)
    share the same physical loot points, so they collapse into a single entry and
    are counted ONCE — summing them would multiply the same points by 3. Families
@@ -367,9 +434,9 @@ const picked = [];
 async function boot(){
   const j = async n => (await fetch(`data/${n}.json`)).json();
   [ITEMS, GROUPS, INST, RECIPES, META, LIMITS, LANDMARKS, TOXIC, EVENTS, SPAWNS, PLAYER,
-   PROFILES, PLACES] =
+   PROFILES, PLACES, ANIMALS] =
     await Promise.all(["items","groups","instances","recipes","meta","limits","landmarks",
-      "toxic","events","spawns","player","profiles","places"].map(j));
+      "toxic","events","spawns","player","profiles","places","animals"].map(j));
   LIMITS.value.forEach((n,i) => TIERBIT[n] = 1 << i);
   buildEntries();
 
@@ -601,8 +668,8 @@ let bldMarker = null;
 function showBuilding(row){
   const [ti, x, z, tierFlags] = row;
   if (bldMarker) bldMarker.remove();
-  bldMarker = L.circleMarker([z,x], {radius:8, color:"#e6e8dd", weight:2,
-    fillColor:"#b8c94a", fillOpacity:.35}).addTo(map);
+  bldMarker = L.circleMarker([z,x], {radius:8, color:tok("text"), weight:2,
+    fillColor:tok("route"), fillOpacity:.35}).addTo(map);
   const type = INST.types[ti];
   const tiers = LIMITS.value.filter((_,i) => tierFlags & (1<<i));
   const conts = buildingLoot(type, tierFlags);
@@ -611,17 +678,17 @@ function showBuilding(row){
   $("#pane-bld").innerHTML = `
     <label class="fld">${human(type.replace(/^Land_/,""))}</label>
     <div class="cls" style="font-family:ui-monospace,Menlo,monospace;font-size:11px;
-      color:var(--dim)">${type}</div>
+      color:var(--text-muted)">${type}</div>
     <p class="muted" style="margin:6px 0 0">
-      x ${x}, z ${z} · <span style="color:var(--accent)">${tiers.join(", ")||"no tier"}</span>
+      x ${x}, z ${z} · <span style="color:var(--ok)">${tiers.join(", ")||"no tier"}</span>
       · ${pts.toFixed(1)} avg loot slots (${conts.reduce((a,c)=>a+c.c.n,0)} points)
         in ${conts.length} container${conts.length===1?"":"s"}
       · usage ${(GROUPS[type]||{usg:[]}).usg.join(", ")||"—"}
     </p>
     <p class="muted" style="margin:6px 0 0">
-      <a href="#" id="bldHere" style="color:var(--accent)">Set my position here</a> ·
+      <a href="#" id="bldHere" style="color:var(--ok)">Set my position here</a> ·
       <a href="https://www.izurvive.com/chernarus/#location=${x};${z};7" target="_blank"
-         rel="noopener noreferrer" style="color:var(--accent)">iZurvive ↗</a>
+         rel="noopener noreferrer" style="color:var(--ok)">iZurvive ↗</a>
     </p>` +
     (conts.length ? conts.map((cc,ci) => `
       <div class="cont">
@@ -702,7 +769,27 @@ const SEARCH_ENTER = 20;             // approach, door, clear, leave
 let SEC_PER_SPOT = 5;                // walk to and check one loot spot
 let MIN_PER_KM = PACE.jog.minPerKm;
 let PACE_KEY = "jog", basePos = null, planLine = null, planMarks = null;
-let CLICK_MODE = "pos", baseMarker = null;
+let ARMED = null, baseMarker = null;
+
+function arm(kind){
+  ARMED = kind;
+  $("#map").classList.add("arming");
+  let el = $("#armed");
+  if (!el){ el = document.createElement("div"); el.id = "armed"; document.body.appendChild(el); }
+  el.textContent = kind === "base"
+    ? "Click the map to set your BASE  ·  Esc to cancel"
+    : "Click the map to set your START  ·  Esc to cancel";
+  syncModeButtons();
+}
+
+function disarm(){
+  ARMED = null;
+  $("#map").classList.remove("arming");
+  const el = $("#armed"); if (el) el.remove();
+  syncModeButtons();
+}
+
+document.addEventListener("keydown", e => { if (e.key === "Escape" && ARMED) disarm(); });
 const fillOn = new Set(), avoidOn = new Set();
 let FILL_ITEMS = new Set();
 
@@ -723,14 +810,12 @@ function setBase(x, z){
   baseMarker = L.marker([z,x], {icon:L.divIcon({className:"",
     html:`<div class="mk" style="font-size:17px">🏠</div>`, iconSize:[18,18]})})
     .bindPopup(`<b>Base</b><br><small>x ${x}, z ${z}</small>`).addTo(map);
-  CLICK_MODE = "pos";
-  syncModeButtons();
   renderPlan();
 }
 
 function syncModeButtons(){
   $("#planMode").querySelectorAll("button").forEach(b =>
-    b.setAttribute("aria-pressed", String(b.dataset.m === CLICK_MODE)));
+    b.setAttribute("aria-pressed", String(!!ARMED && b.dataset.m === ARMED)));
 }
 
 function wirePlanControls(){
@@ -740,8 +825,6 @@ function wirePlanControls(){
     const id = b.dataset.f;
     fillOn.has(id) ? fillOn.delete(id) : fillOn.add(id);
     b.setAttribute("aria-pressed", String(fillOn.has(id)));
-    b.style.background = fillOn.has(id) ? "var(--accent2)" : "";
-    b.style.color = fillOn.has(id) ? "#0f1108" : "";
     refreshFill(); renderPlan();
   });
 
@@ -751,23 +834,21 @@ function wirePlanControls(){
     const u = b.dataset.a;
     avoidOn.has(u) ? avoidOn.delete(u) : avoidOn.add(u);
     b.setAttribute("aria-pressed", String(avoidOn.has(u)));
-    b.style.background = avoidOn.has(u) ? "var(--danger)" : "";
-    b.style.color = avoidOn.has(u) ? "#0f1108" : "";
     renderPlan();
   });
   refreshFill();
 
   $("#planMode").innerHTML =
-    `<button data-m="pos" aria-pressed="true">Set position</button>
-     <button data-m="base">Set base</button>
-     <button data-m="clr">Base = start</button>`;
+    `<button data-m="pos" aria-pressed="false">Set start…</button>
+     <button data-m="base" aria-pressed="false">Set base…</button>
+     <button data-m="clr" aria-pressed="false">Base = start</button>`;
   $("#planMode").querySelectorAll("button").forEach(b => b.onclick = () => {
     if (b.dataset.m === "clr"){
       basePos = null;
       if (baseMarker){ baseMarker.remove(); baseMarker = null; }
-      CLICK_MODE = "pos";
-    } else CLICK_MODE = b.dataset.m;
-    syncModeButtons(); renderPlan();
+      disarm(); renderPlan(); return;
+    }
+    ARMED === b.dataset.m ? disarm() : arm(b.dataset.m);
   });
 
   $("#planPace").innerHTML = Object.entries(PACE).map(([k,v]) =>
@@ -1048,7 +1129,7 @@ function renderPlan(){
              search ${(s.dwell/60).toFixed(1)} min` : ""}
         </div>
         <div class="t">arrive ${Math.round(arrive/60)} min${
-          s.needTotal > 0 ? ` · <b style="color:var(--accent)">${
+          s.needTotal > 0 ? ` · <b style="color:var(--ok)">${
             (100*(1-Math.exp(-s.needTotal))).toFixed(0)}%</b> here` : ""}${
           s.fill > 0.05 ? ` · +${s.fill.toFixed(1)} fill` : ""}</div>
       </span></div>`;
@@ -1065,7 +1146,7 @@ function renderPlan(){
     ${pFind.map(o => `<div style="display:flex;justify-content:space-between;gap:8px;
         padding:3px 0;font-size:13px">
         <span>${o.label}</span>
-        <span style="color:${o.p>0.8?"var(--accent)":o.p>0.5?"var(--warn)":"var(--danger)"};
+        <span style="color:${o.p>0.8?"var(--ok)":o.p>0.5?"var(--warn)":"var(--err)"};
           font-variant-numeric:tabular-nums">${(100*o.p).toFixed(0)}%
           <span class="muted" style="font-size:11px">(${o.lam.toFixed(1)} expected)</span></span>
       </div>`).join("")}
@@ -1079,10 +1160,10 @@ function renderPlan(){
       Leave above ${PLAYER.energyLow} or health starts dropping.
     </p>
     <label class="fld">Route</label>
-    <div class="stop" style="border-left-color:#d2694a">
+    <div class="stop" style="border-left-color:var(--err)">
       <span class="no">A</span><span class="d"><b>Start — ${start.x}, ${start.z}</b></span></div>
     ${rows}
-    <div class="stop" style="border-left-color:#6aaed6">
+    <div class="stop" style="border-left-color:var(--info)">
       <span class="no">B</span><span class="d"><b>${basePos ? "Base" : "Back to start"} — ${end.x}, ${end.z}</b>
       <div class="t">${(legSec(prev, end, MIN_PER_KM)/60).toFixed(1)} min home</div></span></div>
     <p class="muted" style="margin-top:10px">Expected yield assumes every slot is
@@ -1108,13 +1189,13 @@ function clearRoute(){
 function drawRoute(start, stops, end){
   clearRoute();
   const pts = [[start.z,start.x], ...stops.map(s => [s.z,s.x]), [end.z,end.x]];
-  planLine = L.polyline(pts, {color:"#b8c94a", weight:2.5, opacity:.85,
+  planLine = L.polyline(pts, {color:tok("route"), weight:2.5, opacity:.85,
     dashArray:"6 4", interactive:false}).addTo(map);
   planMarks = L.layerGroup(stops.map((s,i) =>
     L.marker([s.z,s.x], {icon:L.divIcon({className:"",
-      html:`<div style="background:#b8c94a;color:#0f1108;border-radius:50%;width:19px;
+      html:`<div style="background:${tok("route")};color:${tok("bg")};border-radius:50%;width:19px;
         height:19px;line-height:19px;text-align:center;font:700 11px/19px sans-serif;
-        box-shadow:0 0 0 2px #12140f">${i+1}</div>`, iconSize:[19,19]})})
+        box-shadow:0 0 0 2px ${tok("bg")}">${i+1}</div>`, iconSize:[19,19]})})
     .bindPopup(`<b>Stop ${i+1}</b><br>${s.n} buildings<br>
       ${s.needTotal>0 ? `<b>${(100*(1-Math.exp(-s.needTotal))).toFixed(0)}%</b> chance of a
         needed item here<br>` : ""}${s.fill>0.05 ? `+${s.fill.toFixed(1)} pack fill<br>` : ""}
@@ -1213,7 +1294,7 @@ class Dots extends L.Layer {
     const r = Math.max(0.55, Math.min(3, 0.9 * Math.pow(2, m.getZoom())));
 
     for (const pass of [0,1]){                 // hot dots drawn last, on top
-      g.fillStyle = pass ? "#cfe063" : "#525e3f";
+      g.fillStyle = pass ? tok("map-dot-hot") : tok("map-dot");
       g.beginPath();
       for (const row of INST.rows){
         const hot = this._pl ? rowPoints(row, this._pl) > 0 : false;
@@ -1259,12 +1340,22 @@ function initMap(){
   /* Click near a building inspects it; click on open ground sets your position.
      The threshold is in metres derived from pixels, so it stays a constant
      ~14px target at any zoom. */
+  /* Clicking the map INSPECTS. It never moves your start or base.
+
+     Those were previously set by any click on open ground, which meant panning,
+     zooming and inspecting -- the things you do constantly -- kept destroying the
+     inputs to the plan. Changing a point is now an armed, one-shot, visibly
+     announced action. */
   map.on("click", e => {
     const x = Math.round(e.latlng.lng), z = Math.round(e.latlng.lat);
-    if (CLICK_MODE === "base"){ setBase(x, z); return; }
+    if (ARMED){
+      (ARMED === "base" ? setBase : setPos)(x, z);
+      disarm();
+      return;
+    }
     const mPerPx = 1 / Math.pow(2, map.getZoom());
-    const hit = nearestBuilding(x, z, Math.max(6, 14 * mPerPx));
-    hit ? showBuilding(hit) : setPos(x, z);
+    const hit = nearestBuilding(x, z, Math.max(8, 16 * mPerPx));
+    if (hit) showBuilding(hit);
   });
 }
 
@@ -1278,24 +1369,55 @@ function overlay(url, opacity){
     {opacity, interactive:false, className:"tierimg"});
 }
 
-function toggleBtn(host, label, colour, onOn, onOff, id){
+/* A layer toggle. State lives in aria-pressed and is styled from CSS, which keeps
+   the pressed look consistent, themeable, and (per WCAG 1.4.1) marked with a check
+   glyph rather than colour alone. `swatch` is a data encoding -- the colour that
+   layer actually draws with -- so it stays a border, never the state indicator. */
+function toggleBtn(host, label, swatch, onOn, onOff, id){
   const b = document.createElement("button");
   b.textContent = label;
   if (id) b.dataset.lid = id;
-  b.setAttribute("aria-pressed","false");
-  if (colour) b.style.borderLeft = `3px solid ${colour}`;
-  b.onclick = () => {
-    const on = b.getAttribute("aria-pressed") !== "true";
+  b.setAttribute("aria-pressed", "false");
+  if (swatch) b.style.borderLeftColor = swatch, b.style.borderLeftWidth = "3px";
+  b._set = on => {
+    if ((b.getAttribute("aria-pressed") === "true") === on) return;
     b.setAttribute("aria-pressed", String(on));
-    b.style.background = on ? (colour || "var(--accent2)") : "";
-    b.style.color = on ? "#0f1108" : "";
     on ? onOn() : onOff();
-    if (map) writeHash();
   };
+  b.onclick = () => { b._set(b.getAttribute("aria-pressed") !== "true"); writeHash(); };
   host.appendChild(b);
+  return b;
+}
+
+/* Every layer group gets All / None. With 20 landmark kinds and 12 species,
+   toggling one at a time is not a real option. */
+function groupBar(host, title, hint){
+  const bar = document.createElement("div");
+  bar.className = "grpbar";
+  bar.innerHTML = `<b>${title}</b>`;
+  for (const [label, want] of [["All", true], ["None", false]]){
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.onclick = () => {
+      host.querySelectorAll("button").forEach(x => x._set && x._set(want));
+      writeHash();
+    };
+    bar.appendChild(b);
+  }
+  if (hint) bar.title = hint;
+  host.parentNode.insertBefore(bar, host);
 }
 
 function buildLayerPanel(){
+  groupBar($("#layTier"),  "Tier zones");
+  groupBar($("#layZone"),  "Usage zones (terrain)");
+  groupBar($("#layBUse"),  "Loot usage (buildings)");
+  groupBar($("#layHaz"),   "Hazards");
+  groupBar($("#layWild"),  "Wildlife");
+  groupBar($("#layEvent"), "Events & vehicles");
+  groupBar($("#laySpawn"), "Player spawns");
+  groupBar($("#layMark"),  "Landmarks");
+
   $("#layToggle").onclick = () => {
     const open = $("#layPanel").hidden;
     $("#layPanel").hidden = !open;
@@ -1304,14 +1426,14 @@ function buildLayerPanel(){
   };
 
   tierLayer = overlay("data/tiers.png", 0.42);
-  toggleBtn($("#layTier"), "Tier 1–4", "#d7be3c",
+  toggleBtn($("#layTier"), "Tier 1–4", tok("tier2"),
     () => tierLayer.addTo(map), () => tierLayer.remove(), "tier");
 
   /* Unique is orthogonal to Tier, not a fifth level, so it gets its own layer.
      Five items: M79, Plastic_Explosive, RemoteDetonator spawn ONLY in these
      zones; ClaymoreMine and Ammo_40mm_Explosive also accept Tier3/4. */
   const uqLayer = overlay("data/unique.png", 0.55);
-  toggleBtn($("#layTier"), "Unique (explosives)", "#eb5adc",
+  toggleBtn($("#layTier"), "Unique (explosives)", tok("unique"),
     () => uqLayer.addTo(map), () => uqLayer.remove(), "unique");
 
   for (const [name, z] of Object.entries(META.zones || {})){
@@ -1326,15 +1448,15 @@ function buildLayerPanel(){
      particles reach. */
   const haz = L.layerGroup();
   for (const t of TOXIC){
-    L.circle([t.z,t.x], {radius:t.outer, color:"#8fd633", weight:1, opacity:.5,
-      fillColor:"#8fd633", fillOpacity:.10, interactive:false}).addTo(haz);
-    L.circle([t.z,t.x], {radius:t.r, color:"#b6f24a", weight:1.5,
-      fillColor:"#8fd633", fillOpacity:.22})
+    L.circle([t.z,t.x], {radius:t.outer, color:tok("ok"), weight:1, opacity:.5,
+      fillColor:tok("ok"), fillOpacity:.10, interactive:false}).addTo(haz);
+    L.circle([t.z,t.x], {radius:t.r, color:tok("ok"), weight:1.5,
+      fillColor:tok("ok"), fillOpacity:.22})
       .bindPopup(`<b>☣ ${t.name}</b><br>Permanent contaminated zone<br>
         radius ${t.r} m (gas to ${t.outer} m)<br><small>x ${t.x}, z ${t.z}</small>`)
       .addTo(haz);
   }
-  toggleBtn($("#layHaz"), `\u2623 Toxic zones (${TOXIC.length})`, "#8fd633",
+  toggleBtn($("#layHaz"), `\u2623 Toxic zones (${TOXIC.length})`, tok("ok"),
     () => haz.addTo(map), () => haz.remove(), "toxic");
 
   /* Terrain usage zones and building usage are INDEPENDENT mechanisms, and
@@ -1349,7 +1471,8 @@ function buildLayerPanel(){
       (byUse[u] ||= []).push(row);
 
   for (const [u, rows] of Object.entries(byUse).sort((a,b) => b[1].length - a[1].length)){
-    const col = (META.zones && META.zones[u]) ? `rgb(${META.zones[u].rgb.join(",")})` : "#9aa088";
+    const col = (META.zones && META.zones[u]) ? `rgb(${META.zones[u].rgb.join(",")})`
+                                              : tok("text-muted");
     const grp = L.layerGroup(rows.map(([, x, z]) =>
       L.circleMarker([z,x], {radius:3, color:col, weight:1, opacity:.9,
         fillColor:col, fillOpacity:.55, interactive:false})));
@@ -1380,6 +1503,22 @@ function buildLayerPanel(){
       .bindPopup(`<b>${sp.label}</b><br><small>x ${x}, z ${z}</small>`)));
     toggleBtn($("#laySpawn"), `${sp.label} (${sp.points.length})`, sp.colour,
       () => grp.addTo(map), () => grp.remove(), sp.id);
+  }
+
+  /* Wildlife territories. Wolves, bears and infected change how you route; deer
+     and boar are why you might route somewhere. HuntingGround is the roaming zone
+     and the only one worth drawing -- Water and Rest are small and incidental. */
+  for (const a of ANIMALS){
+    const col = tok(a.tone);
+    const grp = L.layerGroup(a.zones
+      .filter(z => z[3] === "HuntingGround" || a.zones.length < 200)
+      .map(([x,z,r,kind]) => L.circle([z,x], {radius:r, color:col, weight:1,
+        opacity:.55, fillColor:col, fillOpacity:.10})
+        .bindPopup(`<b>${a.glyph} ${a.label}</b><br>${kind}<br>
+          <small>x ${x}, z ${z} · r ${r} m</small>`)));
+    toggleBtn($("#layWild"),
+      `${a.glyph} ${a.label}${a.hazard ? " ⚠" : ""} (${a.zones.length})`, col,
+      () => grp.addTo(map), () => grp.remove(), "w"+a.id);
   }
 
   for (const k of LANDMARKS.kinds){
@@ -1435,6 +1574,8 @@ function applyHash(){
   const q = new URLSearchParams(location.hash.slice(1));
   const v = (q.get("v")||"").split(",").map(Number);
   if (v.length === 3 && v.every(Number.isFinite)) map.setView([v[1], v[0]], v[2]);
+  if (q.get("theme")) document.documentElement.setAttribute("data-theme", q.get("theme"));
+  if (q.get("layers") === "open") requestAnimationFrame(() => $("#layToggle").click());
   const b = (q.get("b")||"").split(",").map(Number);
   if (b.length === 2 && b.every(Number.isFinite))
     requestAnimationFrame(() => {
@@ -1474,8 +1615,8 @@ function setPos(x, z){
   pos = {x, z};
   $("#px").value = x; $("#pz").value = z;
   if (pinMarker) pinMarker.remove();
-  pinMarker = L.circleMarker([z,x],{radius:7,color:"#fff",weight:2,
-    fillColor:"#d2694a",fillOpacity:1}).addTo(map).bindPopup(`You: ${x}, ${z}`);
+  pinMarker = L.circleMarker([z,x],{radius:7,color:tok("text"),weight:2,
+    fillColor:tok("err"),fillOpacity:1}).addTo(map).bindPopup(`You: ${x}, ${z}`);
   render();
   if ($("#pane-plan").hasAttribute("data-active")) renderPlan();
 }
@@ -1493,8 +1634,8 @@ function render(){
 
   if (!picked.length){
     out.innerHTML = `<p class="muted" style="margin-top:14px">
-      Add an item to see where it spawns. Click the map to set your position and
-      results will rank by travel distance.</p>`;
+      Add an item to see where it spawns. Clicking the map inspects a building;
+      set your start position on the <b>Run</b> tab or type coordinates below.</p>`;
     note.innerHTML = ""; dots.setData(null); return;
   }
 
@@ -1505,7 +1646,7 @@ function render(){
   const untiered = picked.filter(k => !ENTRY[k].it.tier.length).map(k => ENTRY[k].label);
   note.innerHTML = tiers.length ? `<div class="note" style="background:#16220f;
       border-color:#2f4a1e;color:#c3d99a">
-      <b style="color:var(--accent)">Tier gate active.</b> Showing only
+      <b style="color:var(--ok)">Tier gate active.</b> Showing only
       <b>${tiers.join(", ")}</b> areas — where ${picked.length>1?"these items":"this item"}
       can actually spawn.${untiered.length ? ` (${untiered.join(", ")} declares no tier;
       shown everywhere.)` : ""}
@@ -1553,8 +1694,8 @@ function renderChips(){
   $("#chips").innerHTML = picked.map(k => {
     const e = ENTRY[k];
     return `<span class="chip">${e.label}${e.variants.length
-        ? `<small style="color:var(--dim)">${e.variants.length} colours</small>` : ""}
-      <small style="color:var(--dim)">${e.it.tier.join("/")||"any tier"}</small>
+        ? `<small style="color:var(--text-muted)">${e.variants.length} colours</small>` : ""}
+      <small style="color:var(--text-muted)">${e.it.tier.join("/")||"any tier"}</small>
       <button data-k="${k}" title="remove">×</button></span>`;
   }).join("");
   $("#chips").querySelectorAll("button").forEach(b => b.onclick = () => {
@@ -1598,11 +1739,11 @@ function renderCatalog(){
     <ul class="cat">` + shown.map(e => `
       <li data-k="${e.key}" data-in="${picked.includes(e.key)?1:0}">
         <span><span class="nm">${e.label}</span>${e.variants.length
-            ? ` <small style="color:var(--dim)">${e.variants.length} colours</small>` : ""}
+            ? ` <small style="color:var(--text-muted)">${e.variants.length} colours</small>` : ""}
           <br><span class="cls">${e.names[0]}${e.variants.length?"_*":""}</span></span>
         <span class="meta">${e.it.nom
             ? `${e.it.cat||"—"} · <b>${e.it.nom}</b> on map${hoardTag(e.it)}`
-            : `<span style="color:var(--danger)">does not spawn</span>`}<br>
+            : `<span style="color:var(--err)">does not spawn</span>`}<br>
           <span class="t">${e.it.tier.length?e.it.tier.join("/").replace(/Tier/g,"T"):"any tier"}</span>
           · ${e.it.usg.join(", ")||"anywhere"}</span>
       </li>`).join("") + `</ul>`;
@@ -1696,6 +1837,13 @@ function tab(which){
     $("#pane-"+t).toggleAttribute("data-active", t === which);
   }
 }
+$("#themeBtn").onclick = () => {
+  const light = document.documentElement.getAttribute("data-theme") === "light";
+  document.documentElement.setAttribute("data-theme", light ? "dark" : "light");
+  localStorage.setItem("dayz-theme", light ? "dark" : "light");
+  if (typeof dots !== "undefined" && dots) dots._reset();   // canvas colours are resolved, not CSS
+};
+
 $("#tab-loot").onclick = () => tab("loot");
 $("#tab-cat").onclick = () => tab("cat");
 $("#tab-bld").onclick = () => tab("bld");
