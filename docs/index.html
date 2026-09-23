@@ -326,6 +326,11 @@
       <div class="filt" id="planMode"></div>
       <p class="muted" id="planPts" style="margin-top:6px"></p>
 
+      <label class="fld">Sweep event sites <span style="text-transform:none;letter-spacing:0">
+        — instead of items</span></label>
+      <div class="filt" id="planSweep"></div>
+      <p class="muted" id="sweepNote" style="margin-top:4px"></p>
+
       <label class="fld" for="tBudget">Time budget — <b id="tBudgetV">45</b> min</label>
       <input type="range" id="tBudget" min="10" max="180" step="5" value="45" style="width:100%">
 
@@ -800,8 +805,47 @@ function disarm(){
 }
 
 document.addEventListener("keydown", e => { if (e.key === "Escape" && ARMED) disarm(); });
-const fillOn = new Set(), avoidOn = new Set();
+const fillOn = new Set(), avoidOn = new Set(), sweepOn = new Set();
 let FILL_ITEMS = new Set();
+
+/* Event sweep: route through dynamic-event sites instead of item clusters.
+
+   A site's odds of holding a live event right now are nominal / sites. events.xml
+   keeps `nominal` of each event live, placed at random among the fixed positions
+   in cfgeventspawns.xml (position=fixed), and re-rolled whenever one is cleaned
+   up. That is 6/23 for a convoy site but only 3/95 for a heli crash site, which is
+   the number this mode exists to show. Two things the estimate does not know:
+   sites within a player's safe radius (500 m convoy, 1 km heli) are ineligible to
+   receive a spawn, and a looted site keeps its slot until its lifetime (30 / 35
+   min) expires with nobody inside 1 km. Both make the figure an upper bound.
+
+   Dwell reuses the search sliders. `wrecks` is loot-bearing wrecks per site,
+   `spots` the loot points across them: heli from events.xml (one Wreck_UH1Y,
+   lootmin 10, lootmax 15); convoy from cfgeventgroups.xml (5.3 wrecks on average,
+   2-3 items each, 12-18 per site). */
+const SWEEP = {
+  StaticHeliCrash:      {wrecks:1,   spots:15, items:[10,15], safeR:1000},
+  StaticMilitaryConvoy: {wrecks:5.3, spots:15, items:[12,18], safeR:500},
+};
+
+/* Sites inside the start's safe radius are dropped: if you are standing there
+   you can already see whether it is live, and it cannot spawn while you stay. */
+function sweepCandidates(start){
+  const out = [];
+  for (const e of EVENTS){
+    const cfg = SWEEP[e.id];
+    if (!cfg || !sweepOn.has(e.id) || !e.active) continue;
+    const p = e.nominal / e.points.length;
+    const items = (cfg.items[0] + cfg.items[1]) / 2;
+    const dwell = cfg.wrecks * SEARCH_ENTER + cfg.spots * SEC_PER_SPOT;
+    for (const [x, z] of e.points)
+      if (Math.hypot(x - start.x, z - start.z) > cfg.safeR)
+      out.push({x, z, p, items, ev: p * items, kind: e, dwell,
+                title: `${e.glyph} ${e.label}`,
+                need:{}, fill:0, needTotal:0, n:0, pts:cfg.spots});
+  }
+  return out;
+}
 
 /* Union of every enabled profile. Recomputed on toggle rather than per building,
    because the planner asks "is this item wanted" tens of thousands of times. */
@@ -838,6 +882,17 @@ function wirePlanControls(){
     fillOn.has(id) ? fillOn.delete(id) : fillOn.add(id);
     b.setAttribute("aria-pressed", String(fillOn.has(id)));
     refreshFill(); renderPlan();
+  });
+
+  $("#planSweep").innerHTML = EVENTS.filter(e => SWEEP[e.id] && e.active).map(e =>
+    `<button data-e="${e.id}" aria-pressed="${sweepOn.has(e.id)}"
+       title="${e.nominal} live across ${e.points.length} sites">${e.glyph} ${e.label}
+       <span style="opacity:.75">${(100*e.nominal/e.points.length).toFixed(0)}%/site</span></button>`).join("");
+  $("#planSweep").querySelectorAll("button").forEach(b => b.onclick = () => {
+    const id = b.dataset.e;
+    sweepOn.has(id) ? sweepOn.delete(id) : sweepOn.add(id);
+    b.setAttribute("aria-pressed", String(sweepOn.has(id)));
+    renderPlan();
   });
 
   $("#planAvoid").innerHTML = PROFILES.avoidableUsages.map(u =>
@@ -1079,48 +1134,77 @@ function routeTime(stops, start, end, mpk){
 
 /* Greedy insertion: repeatedly add whichever stop buys the most expected items
    per extra minute, at its best position in the route. Then 2-opt the order. */
-function planRoute(cands, start, end, budgetSec, mpk, slots, needKeys){
-  const chosen = [];
-  const pool = cands.slice();
-  let base = routeTime(chosen, start, end, mpk);
-  let baseVal = routeValue(chosen, needKeys, slots);
-
-  for (;;){
-    let best = null;
-    for (let i = 0; i < pool.length; i++){
-      for (let at = 0; at <= chosen.length; at++){
-        const trial = chosen.slice(); trial.splice(at, 0, pool[i]);
-        const t = routeTime(trial, start, end, mpk);
-        if (t > budgetSec) continue;
-        // marginal VALUE per marginal second: with P(at least one) saturating,
-        // a fourth cluster for the same item earns almost nothing and the
-        // greedy naturally moves on to filling the pack instead.
-        const gain = (routeValue(trial, needKeys, slots) - baseVal) / Math.max(1, t - base);
-        if (!best || gain > best.gain) best = {gain, i, at, t,
-                                               val: routeValue(trial, needKeys, slots)};
+function planRoute(cands, start, end, budgetSec, mpk, slots, needKeys,
+                   valueFn = st => routeValue(st, needKeys, slots), refine = false){
+  // Greedy insertion, mutating both arrays.
+  const fill = (chosen, pool) => {
+    let base = routeTime(chosen, start, end, mpk);
+    let baseVal = valueFn(chosen);
+    for (;;){
+      let best = null;
+      for (let i = 0; i < pool.length; i++){
+        for (let at = 0; at <= chosen.length; at++){
+          const trial = chosen.slice(); trial.splice(at, 0, pool[i]);
+          const t = routeTime(trial, start, end, mpk);
+          if (t > budgetSec) continue;
+          // marginal VALUE per marginal second: with P(at least one) saturating,
+          // a fourth cluster for the same item earns almost nothing and the
+          // greedy naturally moves on to filling the pack instead.
+          const val = valueFn(trial);
+          const gain = (val - baseVal) / Math.max(1, t - base);
+          if (!best || gain > best.gain) best = {gain, i, at, t, val};
+        }
       }
+      if (!best) break;
+      chosen.splice(best.at, 0, pool[best.i]);
+      pool.splice(best.i, 1);
+      base = best.t; baseVal = best.val;
+      if (slots && chosen.reduce((a,c) => a + c.fill + c.needTotal, 0) >= slots) break;  // full
     }
-    if (!best) break;
-    chosen.splice(best.at, 0, pool[best.i]);
-    pool.splice(best.i, 1);
-    base = best.t; baseVal = best.val;
-    if (chosen.reduce((a,c) => a + c.fill + c.needTotal, 0) >= slots) break;  // full
-  }
+  };
 
   // 2-opt: reversing a segment often shortens the path without changing which
   // stops are visited, buying budget for one more.
-  for (let pass = 0; pass < 3; pass++){
-    let improved = false;
-    for (let i = 0; i < chosen.length - 1; i++)
-      for (let k = i + 1; k < chosen.length; k++){
-        const alt = chosen.slice();
-        alt.splice(i, k - i + 1, ...chosen.slice(i, k + 1).reverse());
-        if (routeTime(alt, start, end, mpk) < routeTime(chosen, start, end, mpk)){
-          chosen.splice(0, chosen.length, ...alt); improved = true;
+  const twoOpt = chosen => {
+    for (let pass = 0; pass < 3; pass++){
+      let improved = false;
+      for (let i = 0; i < chosen.length - 1; i++)
+        for (let k = i + 1; k < chosen.length; k++){
+          const alt = chosen.slice();
+          alt.splice(i, k - i + 1, ...chosen.slice(i, k + 1).reverse());
+          if (routeTime(alt, start, end, mpk) < routeTime(chosen, start, end, mpk)){
+            chosen.splice(0, chosen.length, ...alt); improved = true;
+          }
         }
+      if (!improved) break;
+    }
+  };
+
+  /* `cands` may be phased -- an array of arrays filled in order, so the caller
+     can say "place the good bets first, then spend what is left on long shots". */
+  let chosen = [], pool = [];
+  if (cands.length && Array.isArray(cands[0])){
+    for (const phase of cands){ pool.push(...phase); fill(chosen, pool); }
+  } else { pool = cands.slice(); fill(chosen, pool); }
+  twoOpt(chosen);
+
+  /* Drop-and-refill. Gain-per-second greedy is myopic when the candidates mix
+     cheap long shots with dear good bets: a 3% heli site that is nearly on the
+     path out-rates a 26% convoy site, and enough of them eat the budget the
+     convoy needed. Removing each stop in turn and re-filling lets the greedy
+     reconsider. Item runs have ten times the candidates and a slider that
+     replans on drag, so this is opt-in. */
+  if (refine)
+    for (let pass = 0; pass < 2; pass++){
+      let improved = false;
+      for (let i = 0; i < chosen.length; i++){
+        const alt = chosen.slice(), altPool = pool.slice();
+        altPool.push(alt.splice(i, 1)[0]);
+        fill(alt, altPool); twoOpt(alt);
+        if (valueFn(alt) > valueFn(chosen) + 1e-9){ chosen = alt; pool = altPool; improved = true; }
       }
-    if (!improved) break;
-  }
+      if (!improved) break;
+    }
   return chosen;
 }
 
@@ -1131,10 +1215,14 @@ function renderPlan(){
         : "same (round trip)"}</b>`
     : `<span style="color:var(--warn)">Click the map to set your start position.</span>`;
 
-  if (!pos || !picked.length){
+  $("#sweepNote").innerHTML = sweepOn.size
+    ? `Routing through event sites. Item picks and pack-fill are ignored while sweeping.`
+    : `Pick one or more to route through event sites instead of item clusters.`;
+
+  if (!pos || (!picked.length && !sweepOn.size)){
     out.innerHTML = `<p class="muted" style="margin-top:14px">
-      Set your position and add at least one item on the
-      <b>Loot map</b> or <b>Catalog</b> tab, then come back.</p>`;
+      Set your position, then add an item on the <b>Loot map</b> or <b>Catalog</b>
+      tab, or pick event sites to sweep above.</p>`;
     clearRoute(); return;
   }
 
@@ -1147,6 +1235,8 @@ function renderPlan(){
      your raw ground speed (${(1000/(MIN_PER_KM*60)).toFixed(1)} m/s made good).` +
     (PACE[PACE_KEY].note ? `<br><span style="color:var(--warn)">Sprint is
      ${PACE[PACE_KEY].note}.</span>` : "");
+
+  if (sweepOn.size){ renderSweep(); return; }
 
   const pl = plans();
   const budget = +$("#tBudget").value * 60;
@@ -1241,6 +1331,101 @@ function renderPlan(){
   });
 }
 
+/* The sweep optimises expected live events found: sum of per-site odds. Odds
+   are independent enough across sites (placements are random draws) that the
+   sum is the right currency, and P(at least one) = 1 - prod(1 - p). */
+function renderSweep(){
+  const out = $("#planOut");
+  const budget = +$("#tBudget").value * 60;
+  const pace = PACE[PACE_KEY];
+  const start = pos, end = basePos || pos;
+  const cands = sweepCandidates(start);
+  const value = st => st.reduce((a,s) => a + s.p, 0);
+  /* Two attempts, keep the better: everything at once, and kinds phased by
+     descending odds so cheap 3% heli detours cannot crowd out a 26% convoy. */
+  const kinds = [...new Set(cands.map(c => c.kind))].sort((a,b) =>
+    b.nominal/b.points.length - a.nominal/a.points.length);
+  const phased = kinds.map(k => cands.filter(c => c.kind === k));
+  const stops = [planRoute(cands, start, end, budget, MIN_PER_KM, 0, [], value, true),
+                 planRoute(phased, start, end, budget, MIN_PER_KM, 0, [], value, true)]
+    .sort((a,b) => value(b) - value(a))[0];
+  if (!stops.length){
+    out.innerHTML = `<p class="muted" style="margin-top:12px">
+      No event site reachable in ${$("#tBudget").value} min. Raise the budget, pick a
+      faster pace, or move closer.</p>`;
+    clearRoute(); return;
+  }
+
+  const total = routeTime(stops, start, end, MIN_PER_KM);
+  const dist = (() => { let d = 0, p = start;
+    for (const s of stops){ d += Math.hypot(p.x-s.x, p.z-s.z); p = s; }
+    return d + Math.hypot(p.x-end.x, p.z-end.z); })();
+  const expLive = stops.reduce((a,s) => a + s.p, 0);
+  const pAny = 1 - stops.reduce((a,s) => a * (1 - s.p), 1);
+  const expItems = stops.reduce((a,s) => a + s.ev, 0);
+  const energy = total * PLAYER[pace.e], water = total * PLAYER[pace.w];
+  const seen = [...new Set(stops.map(s => s.kind))];
+
+  let t = 0, prev = start;
+  const rows = stops.map((s,i) => {
+    const leg = legSec(prev, s, MIN_PER_KM);
+    t += leg; const arrive = t; t += s.dwell; prev = s;
+    return `<div class="stop" data-i="${i}" style="border-left-color:${s.kind.colour}">
+      <span class="no">${i+1}</span>
+      <span class="d"><b>${s.title}</b> · ${nearPlace(s.x, s.z)}
+        <div class="t">x ${Math.round(s.x)}, z ${Math.round(s.z)} ·
+          ${(leg/60).toFixed(1)} min leg · search ${(s.dwell/60).toFixed(1)} min</div>
+        <div class="t">arrive ${Math.round(arrive/60)} min ·
+          <b style="color:var(--ok)">${(100*s.p).toFixed(0)}%</b> live right now</div>
+      </span></div>`;
+  }).join("");
+
+  out.innerHTML = `
+    <div class="kpi">
+      <div><b>${Math.round(total/60)}</b><span>minutes</span></div>
+      <div><b>${(dist/1000).toFixed(1)}</b><span>km map</span></div>
+      <div><b>${expLive.toFixed(1)}</b><span>live events</span></div>
+      <div><b>${stops.length}</b><span>sites</span></div>
+    </div>
+    <label class="fld">Odds of finding one</label>
+    <div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;font-size:13px">
+      <span>At least one live event on this sweep</span>
+      <span style="color:${pAny>0.8?"var(--ok)":pAny>0.5?"var(--warn)":"var(--err)"};
+        font-variant-numeric:tabular-nums">${(100*pAny).toFixed(0)}%
+        <span class="muted" style="font-size:11px">(~${expItems.toFixed(0)} items expected)</span></span>
+    </div>
+    ${seen.map(k => `<p class="muted" style="margin:2px 0 0">${k.glyph} ${k.label}:
+      ${k.nominal} live across ${k.points.length} sites, so any one site is live
+      <b>${(100*k.nominal/k.points.length).toFixed(0)}%</b> of the time.</p>`).join("")}
+    <p class="muted" style="margin:4px 0 0">You never see a site spawn while you are
+      near it: a site inside a player's safe radius (500 m convoy, 1 km heli) is
+      ineligible, so sites that close to your start are skipped. Events live 30–35 min,
+      then re-roll to a random site once nobody is within 1 km. Sites someone looted
+      this cycle still count as live here, so treat the odds as an upper bound.</p>
+    <p class="muted" style="margin:2px 0 0">
+      Costs <b style="color:var(--warn)">${Math.round(energy)}</b> energy and
+      <b style="color:var(--warn)">${Math.round(water)}</b> water
+      (${(100*energy/PLAYER.energyMax).toFixed(0)}% of a full bar).
+    </p>
+    <label class="fld">Route</label>
+    <div class="stop" style="border-left-color:var(--err)">
+      <span class="no">A</span><span class="d"><b>Start — ${start.x}, ${start.z}</b></span></div>
+    ${rows}
+    <div class="stop" style="border-left-color:var(--info)">
+      <span class="no">B</span><span class="d"><b>${basePos ? "Base" : "Back to start"} — ${end.x}, ${end.z}</b>
+      <div class="t">${(legSec(prev, end, MIN_PER_KM)/60).toFixed(1)} min home</div></span></div>`;
+
+  $("#spotNote").innerHTML = `${SEARCH_ENTER}s per wreck plus ${SEC_PER_SPOT}s per loot
+    spot — ${stops.map(s => `${s.kind.label.toLowerCase()} ${Math.round(s.dwell)}s`)
+      .filter((v,i,a) => a.indexOf(v) === i).join(", ")} per site.`;
+
+  drawRoute(start, stops, end);
+  out.querySelectorAll(".stop[data-i]").forEach(el => el.onclick = () => {
+    const s = stops[+el.dataset.i];
+    map.setView([s.z, s.x], 1);
+  });
+}
+
 function clearRoute(){
   if (planLine){ planLine.remove(); planLine = null; }
   if (planMarks){ planMarks.remove(); planMarks = null; }
@@ -1256,7 +1441,8 @@ function drawRoute(start, stops, end){
       html:`<div style="background:${tok("route")};color:${tok("bg")};border-radius:50%;width:19px;
         height:19px;line-height:19px;text-align:center;font:700 11px/19px sans-serif;
         box-shadow:0 0 0 2px ${tok("bg")}">${i+1}</div>`, iconSize:[19,19]})})
-    .bindPopup(`<b>Stop ${i+1}</b><br>${s.n} buildings<br>
+    .bindPopup(`<b>Stop ${i+1}</b><br>${s.title ? `${s.title}<br>${nearPlace(s.x, s.z)}` : `${s.n} buildings`}<br>
+      ${s.p ? `<b>${(100*s.p).toFixed(0)}%</b> chance it is live right now<br>` : ""}
       ${s.needTotal>0 ? `<b>${(100*(1-Math.exp(-s.needTotal))).toFixed(0)}%</b> chance of a
         needed item here<br>` : ""}${s.fill>0.05 ? `+${s.fill.toFixed(1)} pack fill<br>` : ""}
       <small>x ${Math.round(s.x)}, z ${Math.round(s.z)}</small>`))).addTo(map);
@@ -1657,6 +1843,8 @@ function applyHash(){
   // Shareable run plans: items, start, base, budget, pace, tab.
   for (const k of (q.get("pick")||"").split(",").filter(Boolean))
     if (ENTRY[k] && !picked.includes(k)) picked.push(k);
+  for (const k of (q.get("sweep")||"").split(",").filter(Boolean))
+    if (SWEEP[k]) sweepOn.add(k);
   const me = (q.get("me")||"").split(",").map(Number);
   if (me.length === 2 && me.every(Number.isFinite)) setPos(me[0], me[1]);
   const bs = (q.get("base")||"").split(",").map(Number);
@@ -1691,6 +1879,19 @@ function setPos(x, z){
     fillColor:tok("err"),fillOpacity:1}).addTo(map).bindPopup(`You: ${x}, ${z}`);
   render();
   if ($("#pane-plan").hasAttribute("data-active")) renderPlan();
+}
+
+/* "1.2 km SW of Balota" -- event sites sit outside towns, so a bare coordinate
+   is not a place a player can picture. */
+function nearPlace(x, z){
+  let best = null, bd = Infinity;
+  for (const p of PLACES){
+    const d = Math.hypot(p.x - x, p.z - z);
+    if (d < bd){ bd = d; best = p; }
+  }
+  if (!best) return "";
+  return bd < 400 ? best.name
+    : `${(bd/1000).toFixed(1)} km ${bearing(best, {x, z})} of ${best.name}`;
 }
 
 function bearing(from, to){

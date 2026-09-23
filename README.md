@@ -13,6 +13,7 @@ Economy (CLE)** configuration, so the answers reflect what the server is really 
 | | |
 |---|---|
 | **Run planner** | The point of the whole thing — see [Designing a good run](#designing-a-good-run). |
+| **Event sweep** | "I want a heli crash or a convoy" — routes through the sites most likely to be live right now. See [Sweeping event sites](#sweeping-event-sites). |
 | **Loot map** | "I need item X, I'm at Y — where do I go?" |
 | **Catalog** | Browse 1,389 items by category, tier and usage, because nobody remembers `WaterproofBag_Orange`. |
 | **Building lookup** | Click any building — everything that can spawn in it, gated by the tier it stands in. |
@@ -388,6 +389,49 @@ Three of the planner's inputs — travel pace, search speed, and free slots — 
 we cannot look up**. They are sliders, labelled as such, with calibration hints. Everything
 downstream of them is computed from Bohemia's published config.
 
+### Sweeping event sites
+
+The Run tab can route through **dynamic event sites** instead of item clusters — heli
+crashes and military convoys — for the player who wants what only those spawn: NVGs,
+plate carriers, the NBC suit, the SVD. The currency is different from an item run, and it is
+worth stating why.
+
+**A site is not an event.** `db/events.xml` keeps `nominal` events live at once, placed at
+random among the fixed positions in `cfgeventspawns.xml`; when one is cleaned up, its
+replacement is re-rolled. So the odds that any one site holds a live event **right now** are
+`nominal / sites`:
+
+| Event | Live | Sites | Odds per site |
+|---|--:|--:|--:|
+| Military convoy | 6 | 23 | **26%** |
+| Heli crash | 3 | 95 | **3%** |
+
+That gap is the reason this mode exists. A 90-minute sweep of five convoy sites has a 78%
+chance of finding one; the same 90 minutes across heli crash sites is a long shot, and the
+planner says so rather than drawing a hopeful line.
+
+**The objective is expected live events found**, `Σ p` over the visited sites, with
+`P(at least one) = 1 − Π(1 − p)` reported alongside. Selection is the same greedy-by-value-
+per-second and 2-opt as an item run; only the value function changes.
+
+Three mechanics from `events.xml` shape the advice, and two of them the estimate cannot see:
+
+- **`saferadius`** (500 m convoy, 1 km heli): a site with a player inside that radius is
+  ineligible to receive a spawn. You never watch one appear; it appears while you are away.
+  Sites inside the start's safe radius are therefore dropped from the route.
+- **`lifetime`** (30 min convoy, 35 min heli) and **`cleanupradius`** (1 km): once the
+  lifetime is up, the event is removed the first time nobody is within 1 km, and the slot
+  re-rolls immediately (`restock` 0). A convoy someone looted ten minutes ago still holds its
+  slot until then — so the per-site odds are an **upper bound**.
+- **Idle mode** (`db/globals.xml`, `IdleModeStartup=1`): with nobody online the economy
+  freezes. A server with a handful of players elsewhere cycles fastest; an empty one does not
+  cycle at all.
+
+Dwell reuses the search sliders: one wreck with 10–15 loot points for a heli
+(`events.xml` children), 5.3 wrecks averaging 12–18 items for a convoy
+(`cfgeventgroups.xml`, which the build otherwise does not read — the two per-kind figures
+are constants in the page, noted as such).
+
 ### Preferences are config, not code
 
 What a run optimises for is a *product decision*, so it lives in
@@ -421,7 +465,9 @@ to be declared.
 - [ ] Spawn *probability* weighting, not just point counts — `nominal`, `min`, and
       competition from every other item sharing that container
 - [ ] Livonia (`dayzOffline.enoch`)
-- [ ] Dynamic event loot (heli crashes, convoys)
+- [ ] Dynamic event loot (heli crashes, convoys) — what is *in* the wreck. Routing to the
+      sites is done ([Sweeping event sites](#sweeping-event-sites)); the popup still only
+      says where.
 
 ### Later / maybe
 
