@@ -12,3 +12,6 @@
 # Upstream data cache — fetched by `tools/build_index.py sync`, never vendored.
 # See README "Licensing posture".
 cache/
+
+# Python bytecode
+__pycache__/
